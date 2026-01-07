@@ -6,7 +6,9 @@
 
 Glyphs 字型編輯器外掛，用於拆解漢字結構並查詢相關字符。
 
-![截圖](screenshot.png)
+<p align="center">
+  <img src="screenshot.png" alt="截圖" width="500">
+</p>
 
 ## 功能
 
@@ -65,7 +67,9 @@ Apache License 2.0 — 詳見 [LICENSE](LICENSE)
 
 A Glyphs font editor plugin for decomposing Chinese characters and exploring related glyphs.
 
-![Screenshot](screenshot.png)
+<p align="center">
+  <img src="screenshot.png" alt="Screenshot" width="500">
+</p>
 
 ## Features
 
