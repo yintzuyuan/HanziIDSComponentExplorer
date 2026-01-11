@@ -4,7 +4,7 @@
 
 # 漢字 IDS 部件查詢
 
-Glyphs 字型編輯器外掛，用於拆解漢字結構並查詢相關字符。
+[Glyphs](https://glyphsapp.com/) 字型編輯器外掛，用於拆解漢字結構並查詢相關字符。
 
 <p align="center">
   <img src="screenshot.png" alt="截圖" width="500">
@@ -65,7 +65,7 @@ Apache License 2.0 — 詳見 [LICENSE](LICENSE)
 
 # Hanzi IDS Component Explorer
 
-A Glyphs font editor plugin for decomposing Chinese characters and exploring related glyphs.
+A [Glyphs](https://glyphsapp.com/) font editor plugin for decomposing Chinese characters and exploring related glyphs.
 
 <p align="center">
   <img src="screenshot.png" alt="Screenshot" width="500">

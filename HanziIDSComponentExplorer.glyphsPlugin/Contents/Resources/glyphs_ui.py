@@ -25,7 +25,7 @@ from AppKit import (NSFont, NSAttributedString, NSMutableAttributedString,
                     NSTableViewNoColumnAutoresizing, NSLineBreakByClipping)
 import CoreText
 
-from hanzi_core import HanziCore
+from hanzi_core import HanziCore, is_complete_search_input
 from glyphs_adapter import GlyphsAdapter, GlyphsSettings
 from localization import L
 
@@ -351,6 +351,10 @@ class HanziComponentSearchTool:
         # 綁定視窗關閉事件
         self.w.bind("close", self.windowWillClose)
 
+        # 綁定視窗焦點事件（Issue #31：視窗聚焦模式）
+        self.w.bind("became key", self.on_window_became_key)
+        self.w.bind("resigned key", self.on_window_resigned_key)
+
         # 建立事件處理器
         self.selectionObserver = SelectionObserverHandler.alloc().initWithTool_(self)
         self.filterMenuHandler = FilterMenuHandler.alloc().initWithTool_(self)
@@ -368,8 +372,9 @@ class HanziComponentSearchTool:
         # 註冊 Glyphs 回調以監聽字符變化
         self.adapter.register_callback(self.on_glyph_changed)
 
-        # 載入字型檔字集作為預設篩選（不觸發搜尋，由 on_glyph_changed 統一處理）
-        self.loadFontCharset(trigger_search=False)
+        # 如果沒有自訂字集，才載入字型檔字集作為預設篩選
+        if not self.use_custom_charset:
+            self.loadFontCharset(trigger_search=False)
 
         # 開啟時立即抓取當前字符並執行搜尋
         self.on_glyph_changed()
@@ -602,17 +607,22 @@ class HanziComponentSearchTool:
         """
         當前字符變化時的回調函式（透過 UPDATEINTERFACE 通知觸發）
 
-        新行為（自動模式）：
+        自動模式行為：
         1. 清空搜尋框（不填入字符）
         2. 使用多 Unicode 智能偵測找到資料庫中存在的字符
         3. 設定 current_char 並觸發搜尋
-        4. 進入自動模式（清除手動模式標記）
+
+        注意：手動模式時此方法會提前返回（Issue #31：視窗聚焦模式）
 
         參數:
         notification: 通知物件（可選）
         """
         try:
             if not self.auto_fetch_enabled:
+                return
+
+            # 手動模式時不自動跟隨（Issue #31：視窗聚焦模式）
+            if self.is_manual_mode:
                 return
 
             # 檢查 IME 輸入狀態，跳過未確認的注音/拼音輸入
@@ -642,9 +652,6 @@ class HanziComponentSearchTool:
             valid_char = self.find_valid_unicode_for_char(glyph)
 
             if valid_char:
-                # 進入自動模式
-                self.is_manual_mode = False
-
                 # 清空搜尋框
                 self.w.inputText.set("")
 
@@ -680,12 +687,16 @@ class HanziComponentSearchTool:
 
         當用戶在搜尋框輸入時：
         1. 進入手動模式
-        2. 執行搜尋
+        2. 只有輸入完整有效格式時才執行搜尋
         """
         # 用戶開始輸入 → 進入手動模式
         input_text = self.w.inputText.get().strip()
         if input_text:
             self.is_manual_mode = True
+
+        # 只有完整有效的輸入才執行搜尋，否則保持原顯示
+        if not is_complete_search_input(input_text):
+            return
 
         self.perform_search()
 
@@ -708,6 +719,10 @@ class HanziComponentSearchTool:
         else:
             # 手動模式：使用搜尋框內容
             self.current_char = None  # 清除自動模式的字符
+
+            # 多字輸入時只取第一個字（Issue #31）
+            if len(input_text) > 1 and ord(input_text[0]) > 127:
+                input_text = input_text[0]
 
         # 處理 Unicode 格式
         if input_text.startswith(('uni', 'UNI')) and len(input_text) == 7:
@@ -1449,6 +1464,29 @@ class HanziComponentSearchTool:
 
         import webbrowser
         webbrowser.open(url)
+
+    # === 視窗焦點事件（Issue #31）===
+
+    def on_window_became_key(self, sender):
+        """
+        視窗獲得焦點時的回調（Issue #31）
+
+        進入手動模式，暫停自動跟隨 Glyphs 選中字符
+        """
+        self.is_manual_mode = True
+
+    def on_window_resigned_key(self, sender):
+        """
+        視窗失去焦點時的回調（Issue #31）
+
+        進入自動模式，恢復跟隨 Glyphs 選中字符。
+        只有當 Glyphs 當前字形與上次不同時才會刷新搜尋。
+        """
+        self.is_manual_mode = False
+
+        # 觸發檢查，on_glyph_changed 會自動比較當前字形與 last_glyph_name
+        # 只有字形改變時才會執行搜尋
+        self.on_glyph_changed()
 
     # === 其他功能 ===
 

@@ -703,6 +703,57 @@ class HanziCore:
         return None
 
 
+# === 搜尋輸入驗證 ===
+
+def is_complete_search_input(text: str) -> bool:
+    """
+    檢查輸入是否為完整有效的搜尋格式
+
+    只有完整有效的輸入才應觸發搜尋，避免輸入過程中的錯誤搜尋。
+
+    有效格式：
+    - 單個漢字（非 ASCII，Unicode > 127）
+    - uni 前綴：uniXXXX（7 字符，如 uni6F22）
+    - U+ 前綴：U+XXXX 或 U+XXXXX（6-7 字符，如 U+6F22）
+    - u 前綴：uXXXXX（6 字符，如 u2F804）
+    - 純十六進位碼：XXXX 或 XXXXX（4-5 位，如 6F22）
+
+    參數:
+    text (str): 搜尋輸入文字
+
+    回傳:
+    bool: 是否為完整有效的搜尋格式
+    """
+    if not text:
+        return False
+
+    # 漢字輸入（非 ASCII）- 接受單個或多個漢字，搜尋時會取第一個字
+    if ord(text[0]) > 127:
+        return True
+
+    HEX_CHARS = '0123456789ABCDEFabcdef'
+
+    # uni 前綴：正好 uniXXXX 格式（7 字符）
+    if text.lower().startswith('uni'):
+        return len(text) == 7 and all(c in HEX_CHARS for c in text[3:])
+
+    # U+ 前綴：U+XXXX 或 U+XXXXX（6-7 字符）
+    if text.upper().startswith('U+'):
+        hex_part = text[2:]
+        return len(hex_part) in (4, 5) and all(c in HEX_CHARS for c in hex_part)
+
+    # u 前綴（非 uni）：uXXXXX 或 uXXXXXX（6-7 字符，對應 SIP/TIP）
+    if text.lower().startswith('u') and not text.lower().startswith('uni'):
+        hex_part = text[1:]
+        return len(hex_part) in (5, 6) and all(c in HEX_CHARS for c in hex_part)
+
+    # 純十六進位碼：正好 4-5 位
+    if len(text) in (4, 5) and all(c in HEX_CHARS for c in text):
+        return True
+
+    return False
+
+
 # === 獨立執行測試 ===
 
 if __name__ == '__main__':
