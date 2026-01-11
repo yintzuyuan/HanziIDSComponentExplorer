@@ -1,0 +1,71 @@
+# 此 workflow 不使用任何不可信的外部輸入，安全風險已評估
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - '**.pdata'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download data sources
+        run: |
+          mkdir -p data
+          git clone --depth=1 https://github.com/chise/ids.git data/chise-ids
+          git clone --depth=1 https://github.com/yintzuyuan/CNS11643-OpenData.git data/cns11643
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  build-verify:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download data sources
+        run: |
+          mkdir -p data
+          git clone --depth=1 https://github.com/chise/ids.git data/chise-ids
+          git clone --depth=1 https://github.com/yintzuyuan/CNS11643-OpenData.git data/cns11643
+
+      - name: Build and verify
+        run: |
+          python scripts/build_ids.py
+          python -c "
+          import gzip
+          import pickle
+          with gzip.open('dist/ids.pdata', 'rb') as f:
+              data = pickle.load(f)
+          print(f'載入成功：{len(data)} 個字符')
+          assert len(data) > 90000, '字符數量異常'
+          sample = list(data.values())[0]
+          assert 'unicode' in sample, '缺少 unicode 欄位'
+          assert 'ids_1' in sample, '缺少 ids_1 欄位'
+          print('資料結構驗證通過')
+          "

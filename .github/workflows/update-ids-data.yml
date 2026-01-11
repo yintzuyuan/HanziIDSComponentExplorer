@@ -1,0 +1,60 @@
+# 此 workflow 不使用任何不可信的外部輸入，安全風險已評估
+name: Update IDS Data
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # 每週日 00:00 UTC
+  workflow_dispatch:      # 手動觸發
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download data sources
+        run: |
+          mkdir -p data
+          git clone --depth=1 https://github.com/chise/ids.git data/chise-ids
+          git clone --depth=1 https://github.com/yintzuyuan/CNS11643-OpenData.git data/cns11643
+
+      - name: Build IDS database
+        run: python scripts/build_ids.py --copy
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Check for changes
+        id: check
+        run: |
+          if git diff --quiet HanziIDSComponentExplorer.glyphsPlugin/Contents/Resources/data/ids.pdata; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: update IDS database from upstream'
+          title: 'chore: 更新 IDS 資料庫'
+          body: |
+            ## 自動更新
+
+            上游資料來源有更新，已自動重新建置 ids.pdata。
+
+            **驗證**：
+            - [x] 測試通過
+            - [x] ids.pdata 已重新生成
+          branch: chore/update-ids-data
+          labels: automation,data-update
