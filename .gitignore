@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.venv/
 
 # macOS
 .DS_Store
@@ -13,3 +15,11 @@ __pycache__/
 .vscode/
 *.swp
 *.swo
+
+# Environment
+.env
+
+# Build (CI/CD 動態下載，不進版控)
+data/
+build/
+dist/
