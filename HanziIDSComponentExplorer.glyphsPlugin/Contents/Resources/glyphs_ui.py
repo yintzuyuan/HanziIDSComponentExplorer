@@ -316,10 +316,10 @@ class HanziComponentSearchTool:
             value=self.show_derived,
         )
 
-        # 筆畫篩選滑桿（與衍生字 checkbox 之間，向右延伸到篩選按鈕前）
+        # 筆畫篩選滑桿（與衍生字 checkbox 之間，右側留空間給狀態文字）
         # tickMarkCount=6 對應 [±0, ±1, ±2, ±3, ±5, OFF]
         self.w.strokeFilterSlider = vanilla.Slider(
-            (266, -34, -42, 18),
+            (266, -34, -82, 18),
             minValue=0,
             maxValue=STROKE_FILTER_OFF_TICK,
             value=self.stroke_filter_tick,
@@ -328,7 +328,15 @@ class HanziComponentSearchTool:
             sizeStyle="small",
             callback=self.on_stroke_filter_changed,
         )
-        self._update_stroke_filter_tooltip()
+
+        # 筆畫篩選當前值顯示（滑桿右側，常駐可見）
+        self.w.strokeFilterValue = vanilla.TextBox(
+            (-78, -33, 36, 17),
+            "",
+            alignment="right",
+            sizeStyle="small",
+        )
+        self._refresh_stroke_filter_display()
 
         # 篩選按鈕（右下角）
         filter_icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
@@ -1218,17 +1226,31 @@ class HanziComponentSearchTool:
             return None
         return STROKE_FILTER_VALUES[self.stroke_filter_tick]
 
-    def _update_stroke_filter_tooltip(self):
-        """更新滑桿 tooltip 顯示當前筆畫差設定"""
+    def _format_stroke_filter_value(self) -> str:
+        """回傳當前筆畫篩選的簡短顯示字串（給 inline 標籤用）。
+
+        OFF → 本地化「關」/「OFF」
+        其他 → ±N（如「±2」）
+        """
         diff = self._stroke_filter_max_diff()
-        label = L("slider_stroke_label")
         if diff is None:
-            current = f"{label}{L('slider_stroke_off')}"
-        else:
-            current = f"{label}{diff}"
-        tooltip = f"{current} — {L('tooltip_stroke_filter')}"
+            return L("slider_stroke_off")
+        return f"±{diff}"
+
+    def _refresh_stroke_filter_display(self):
+        """同步更新滑桿 tooltip 與右側 inline 狀態文字"""
+        value_text = self._format_stroke_filter_value()
+        label = L("slider_stroke_label")  # e.g. "筆畫±"
+        # tooltip 顯示完整描述（含功能說明）
+        tooltip = f"{label}{value_text} — {L('tooltip_stroke_filter')}"
         try:
             self.w.strokeFilterSlider.getNSSlider().setToolTip_(tooltip)
+        except Exception:
+            pass
+
+        # inline 文字只顯示當前值（節省空間）
+        try:
+            self.w.strokeFilterValue.set(value_text)
         except Exception:
             pass
 
@@ -1242,7 +1264,7 @@ class HanziComponentSearchTool:
 
         self.stroke_filter_tick = new_tick
         self.settings.set("strokeFilterTick", new_tick)
-        self._update_stroke_filter_tooltip()
+        self._refresh_stroke_filter_display()
         self.update_related_display()
 
     def update_related_display(self, char=None):
