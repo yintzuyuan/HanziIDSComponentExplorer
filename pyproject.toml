@@ -1,6 +1,6 @@
 [project]
 name = "hanzi-ids-component-explorer"
-version = "1.0.1"
+version = "1.0.3"
 description = "Glyphs plugin for exploring Chinese character IDS components"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -21,6 +21,12 @@ dev = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+# 本專案為 Glyphs 外掛，不發佈為 Python 套件。
+# pyproject.toml 僅用於 uv / pytest 等開發工具，因此明確宣告無 top-level module，
+# 避免 setuptools 在 data/ 與 LICENSES/ 之間做自動 package 探索時失敗。
+[tool.setuptools]
+py-modules = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
