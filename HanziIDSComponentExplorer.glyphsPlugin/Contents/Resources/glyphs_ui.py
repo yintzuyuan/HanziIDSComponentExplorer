@@ -319,7 +319,7 @@ class HanziComponentSearchTool:
         # 筆畫篩選滑桿（與衍生字 checkbox 之間，右側留空間給狀態文字）
         # tickMarkCount=6 對應 [±0, ±1, ±2, ±3, ±5, OFF]
         self.w.strokeFilterSlider = vanilla.Slider(
-            (266, -34, -82, 18),
+            (266, -34, -76, 18),
             minValue=0,
             maxValue=STROKE_FILTER_OFF_TICK,
             value=self.stroke_filter_tick,
@@ -330,10 +330,11 @@ class HanziComponentSearchTool:
         )
 
         # 筆畫篩選當前值顯示（滑桿右側，常駐可見）
+        # 使用 left 對齊讓文字緊貼滑桿右緣，不會因 OFF/±N 長度不同產生視覺空隙
         self.w.strokeFilterValue = vanilla.TextBox(
-            (-78, -33, 36, 17),
+            (-72, -33, 30, 17),
             "",
-            alignment="right",
+            alignment="left",
             sizeStyle="small",
         )
         self._refresh_stroke_filter_display()
