@@ -129,6 +129,145 @@ class TestBuild:
         assert "ids_2" in sample_data
 
 
+class TestStrokeDataLoading:
+    """測試從 CNS_stroke.txt 載入筆畫資料"""
+
+    def test_load_stroke_data_returns_empty_when_file_missing(self, tmp_path):
+        """檔案不存在時應回傳空 dict 並印警告，不應拋例外"""
+        generator = IDSGenerator(
+            chise_ids_path=tmp_path / "chise-ids",
+            unicode_mapping_path=tmp_path / "cns_mapping",
+            cns_properties_path=tmp_path / "cns_properties",  # 不存在
+            dist_path=tmp_path / "dist",
+        )
+
+        stroke_map = generator._load_stroke_data()
+        assert stroke_map == {}
+
+    def test_load_stroke_data_parses_real_format(self, tmp_path):
+        """測試解析 CNS_stroke.txt 真實格式：cns_code\\tstroke_count"""
+        # 準備假的 CNS properties 目錄
+        cns_props = tmp_path / "cns_properties"
+        cns_props.mkdir()
+        stroke_file = cns_props / "CNS_stroke.txt"
+        stroke_file.write_text(
+            "1-2122\t1\n1-4421\t6\n2-2433\t10\n",
+            encoding="utf-8",
+        )
+
+        # 準備假的 CNS→Unicode mapping
+        cns_mapping = tmp_path / "cns_mapping"
+        cns_mapping.mkdir()
+        mapping_file = cns_mapping / "CNS2UNICODE_Unicode_BMP.txt"
+        mapping_file.write_text(
+            "1-2122\t4E00\n1-4421\t5B57\n2-2433\t6F22\n",
+            encoding="utf-8",
+        )
+
+        generator = IDSGenerator(
+            chise_ids_path=tmp_path / "chise-ids",
+            unicode_mapping_path=cns_mapping,
+            cns_properties_path=cns_props,
+            dist_path=tmp_path / "dist",
+        )
+
+        stroke_map = generator._load_stroke_data()
+
+        assert stroke_map == {
+            "4E00": 1,
+            "5B57": 6,
+            "6F22": 10,
+        }
+
+    def test_load_stroke_data_skips_unmapped_cns_codes(self, tmp_path):
+        """無 CNS→Unicode 對應的 CNS 碼應被跳過，不阻擋其他資料"""
+        cns_props = tmp_path / "cns_properties"
+        cns_props.mkdir()
+        (cns_props / "CNS_stroke.txt").write_text(
+            "1-2122\t1\n99-9999\t99\n",  # 99-9999 沒有 mapping
+            encoding="utf-8",
+        )
+
+        cns_mapping = tmp_path / "cns_mapping"
+        cns_mapping.mkdir()
+        (cns_mapping / "CNS2UNICODE_Unicode_BMP.txt").write_text(
+            "1-2122\t4E00\n",
+            encoding="utf-8",
+        )
+
+        generator = IDSGenerator(
+            chise_ids_path=tmp_path / "chise-ids",
+            unicode_mapping_path=cns_mapping,
+            cns_properties_path=cns_props,
+            dist_path=tmp_path / "dist",
+        )
+
+        stroke_map = generator._load_stroke_data()
+        assert stroke_map == {"4E00": 1}
+        assert "99-9999" not in stroke_map
+
+
+@skip_if_no_data
+class TestStrokeDataIntegration:
+    """測試 strokes 欄位整合到最終資料庫
+
+    透過 HanziCore 載入剛建置的 pdata，避免測試直接處理底層格式。
+    """
+
+    @pytest.fixture
+    def built_core(self, tmp_path):
+        """建置一個新 pdata 並用 HanziCore 載入"""
+        # 動態 import 避免在 collect 階段就要求 Resources 存在
+        plugin_resources = (
+            Path(__file__).parent.parent
+            / "HanziIDSComponentExplorer.glyphsPlugin"
+            / "Contents"
+            / "Resources"
+        )
+        sys.path.insert(0, str(plugin_resources))
+        from hanzi_core import HanziCore
+
+        generator = IDSGenerator(dist_path=tmp_path / "dist")
+        pdata_path = generator.build()
+        return HanziCore(str(pdata_path))
+
+    def test_known_char_has_correct_stroke_count(self, built_core):
+        """「字」應為 6 畫（CNS 標準）"""
+        strokes = built_core.get_stroke_count("字")
+        assert strokes == 6, f"「字」應為 6 畫，實際：{strokes}"
+
+    def test_multiple_known_chars(self, built_core):
+        """抽樣多個常見字，確認筆畫資料正確"""
+        # CNS 標準筆畫數
+        expected = {
+            "一": 1,
+            "二": 2,
+            "三": 3,
+            "木": 4,
+            "字": 6,
+        }
+        for char, expected_strokes in expected.items():
+            actual = built_core.get_stroke_count(char)
+            assert actual == expected_strokes, (
+                f"「{char}」應為 {expected_strokes} 畫，實際：{actual}"
+            )
+
+    def test_database_has_meaningful_stroke_coverage(self, built_core):
+        """資料庫應有大量字具有 strokes，少量字 strokes 為 None"""
+        int_count = 0
+        none_count = 0
+        for char in built_core.db:
+            strokes = built_core.get_stroke_count(char)
+            if strokes is None:
+                none_count += 1
+            else:
+                int_count += 1
+
+        assert int_count > 50000, f"應有大量字含 strokes，實際：{int_count}"
+        # 至少有一些超出 CNS 範圍的字（Ext-G/H 等）
+        assert none_count > 0, "應有部分字 strokes 為 None"
+
+
 @skip_if_no_data
 class TestOutputConsistency:
     """測試與現有 pdata 一致性"""

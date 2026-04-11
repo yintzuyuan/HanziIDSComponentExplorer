@@ -16,8 +16,8 @@ Source      | License                                | Bundled As
 CHISE IDS   | GNU General Public License v2.0 or     | ids.pdata
             | later (GPL-2.0-or-later)               |
 ------------|----------------------------------------|--------------------
-CNS11643    | 政府資料開放授權條款                      | ids.pdata (mapping)
-            | (Open Government Data License, Taiwan) |
+CNS11643    | 政府資料開放授權條款                      | ids.pdata (mapping +
+            | (Open Government Data License, Taiwan) | stroke counts)
 
 The file ids.pdata contains derivative data from the CHISE IDS database
 and is therefore subject to the terms of GPL-2.0-or-later.
@@ -46,3 +46,7 @@ Executive Yuan, Taiwan, under the Open Government Data License
 (政府資料開放授權條款).
 
 Source: https://data.gov.tw/dataset/5961
+
+The stroke count data used by the stroke filter feature is derived from
+`Tables/Properties/CNS_stroke.txt` in the CNS11643-OpenData repository
+(https://github.com/yintzuyuan/CNS11643-OpenData).

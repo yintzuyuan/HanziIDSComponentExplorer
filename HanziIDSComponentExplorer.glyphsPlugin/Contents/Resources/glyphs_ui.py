@@ -15,14 +15,24 @@ import time
 from typing import Optional, Set, List
 
 import vanilla
-from AppKit import (NSFont, NSAttributedString, NSMutableAttributedString,
-                    NSFontAttributeName, NSForegroundColorAttributeName,
-                    NSKernAttributeName, NSParagraphStyleAttributeName,
-                    NSBaselineOffsetAttributeName, NSMutableParagraphStyle,
-                    NSColor, NSFontManager, NSOpenPanel,
-                    NSObject, NSImage, NSFontDescriptor,
-                    NSFontFamilyAttribute, NSNotificationCenter,
-                    NSTableViewNoColumnAutoresizing, NSLineBreakByClipping)
+from AppKit import (
+    NSFont,
+    NSAttributedString,
+    NSMutableAttributedString,
+    NSFontAttributeName,
+    NSForegroundColorAttributeName,
+    NSKernAttributeName,
+    NSParagraphStyleAttributeName,
+    NSBaselineOffsetAttributeName,
+    NSMutableParagraphStyle,
+    NSColor,
+    NSOpenPanel,
+    NSObject,
+    NSImage,
+    NSNotificationCenter,
+    NSTableViewNoColumnAutoresizing,
+    NSLineBreakByClipping,
+)
 import CoreText
 
 from hanzi_core import HanziCore, is_complete_search_input
@@ -32,29 +42,34 @@ from localization import L
 
 # 字體大小設定
 RELATED_CHARS_FONT_SIZE = 20  # 右側相關字區域
-CONTENT_FONT_SIZE = 14        # 左側詳細資訊區
-RESULT_LIST_FONT_SIZE = 13    # 中間結果列表
+CONTENT_FONT_SIZE = 14  # 左側詳細資訊區
+RESULT_LIST_FONT_SIZE = 13  # 中間結果列表
+
+# 筆畫篩選滑桿設定
+# tick 0..4 對應筆畫差 ±0/±1/±2/±3/±5；tick 5 為「關閉篩選」
+STROKE_FILTER_VALUES = [0, 1, 2, 3, 5]
+STROKE_FILTER_OFF_TICK = 5
+STROKE_FILTER_TICK_COUNT = STROKE_FILTER_OFF_TICK + 1  # 6 個 tick 位置
 
 # 右側相關字區域排版設定
-RELATED_CHARS_KERN = 0.0      # 字距（字符間距，單位：點）- 預設值
+RELATED_CHARS_KERN = 0.0  # 字距（字符間距，單位：點）- 預設值
 RELATED_CHARS_LINE_HEIGHT = 1.2  # 行高倍數（相對於字體大小）
 
 # Glyphs 顏色 ID 到 RGB 值的映射（12 種顏色）
 GLYPH_COLOR_MAP = {
-    0: (0.85, 0.26, 0.26, 1.0),   # 紅
-    1: (0.97, 0.56, 0.26, 1.0),   # 橘
-    2: (0.65, 0.48, 0.32, 1.0),   # 棕
-    3: (0.97, 0.90, 0.26, 1.0),   # 黃
-    4: (0.67, 0.90, 0.26, 1.0),   # 淺綠
-    5: (0.26, 0.60, 0.26, 1.0),   # 深綠
-    6: (0.26, 0.90, 0.97, 1.0),   # 淺藍
-    7: (0.26, 0.56, 0.90, 1.0),   # 深藍
-    8: (0.51, 0.26, 0.90, 1.0),   # 紫
-    9: (0.90, 0.26, 0.67, 1.0),   # 洋紅
+    0: (0.85, 0.26, 0.26, 1.0),  # 紅
+    1: (0.97, 0.56, 0.26, 1.0),  # 橘
+    2: (0.65, 0.48, 0.32, 1.0),  # 棕
+    3: (0.97, 0.90, 0.26, 1.0),  # 黃
+    4: (0.67, 0.90, 0.26, 1.0),  # 淺綠
+    5: (0.26, 0.60, 0.26, 1.0),  # 深綠
+    6: (0.26, 0.90, 0.97, 1.0),  # 淺藍
+    7: (0.26, 0.56, 0.90, 1.0),  # 深藍
+    8: (0.51, 0.26, 0.90, 1.0),  # 紫
+    9: (0.90, 0.26, 0.67, 1.0),  # 洋紅
     10: (0.75, 0.75, 0.75, 1.0),  # 淺灰
     11: (0.50, 0.50, 0.50, 1.0),  # 深灰
 }
-
 
 
 # 篩選選單處理器（使用獨立類別確保 ObjC 方法正確註冊）
@@ -79,12 +94,7 @@ class _FilterMenuHandlerBase(NSObject):
 
 
 # 使用動態名稱避免重複定義
-FilterMenuHandler = type(
-    filter_handler_class_name,
-    (_FilterMenuHandlerBase,),
-    {}
-)
-
+FilterMenuHandler = type(filter_handler_class_name, (_FilterMenuHandlerBase,), {})
 
 
 # 對話框色塊點擊處理器（用於顏色選擇對話框）
@@ -94,13 +104,15 @@ DialogColorBlockHandler = type(
     dialog_handler_class_name,
     (NSObject,),
     {
-        'initWithTool_': lambda self, tool: setattr(self, 'tool', tool) or self,
-        'handleBlockClick_': lambda self, gesture: (
+        "initWithTool_": lambda self, tool: setattr(self, "tool", tool) or self,
+        "handleBlockClick_": lambda self, gesture: (
             self.tool.toggle_color_block_selection(
                 self.tool.dialog_color_block_map.get(id(gesture.view()))
-            ) if id(gesture.view()) in self.tool.dialog_color_block_map else None
-        )
-    }
+            )
+            if id(gesture.view()) in self.tool.dialog_color_block_map
+            else None
+        ),
+    },
 )
 
 
@@ -111,11 +123,11 @@ SelectionObserverHandler = type(
     selection_observer_class_name,
     (NSObject,),
     {
-        'initWithTool_': lambda self, tool: setattr(self, 'tool', tool) or self,
-        'textViewSelectionDidChange_': lambda self, notification: (
+        "initWithTool_": lambda self, tool: setattr(self, "tool", tool) or self,
+        "textViewSelectionDidChange_": lambda self, notification: (
             self.tool.on_selection_changed(notification)
-        )
-    }
+        ),
+    },
 )
 
 
@@ -167,17 +179,20 @@ class HanziComponentSearchTool:
         self.use_custom_charset = False  # 是否使用自訂字集
 
         # === 建立主視窗 ===
-        window_title = title or L('window_title')
-        self.w = vanilla.FloatingWindow((520, 440), window_title,
-                                        minSize=(420, 300),
-                                        maxSize=(1000, 1000),
-                                        autosaveName="com.YinTzuYuan.HanziIDSComponentExplorer.MainWindow")
+        window_title = title or L("window_title")
+        self.w = vanilla.FloatingWindow(
+            (520, 440),
+            window_title,
+            minSize=(420, 300),
+            maxSize=(1000, 1000),
+            autosaveName="com.YinTzuYuan.HanziIDSComponentExplorer.MainWindow",
+        )
 
         # === 頂部搜尋區域 ===
         self.w.inputText = vanilla.SearchBox(
             (12, 12, -40, 22),  # 縮短右側，為插入按鈕留空間（24px 按鈕 + 4px 間距）
-            placeholder=L('search_placeholder'),
-            callback=self.search_callback
+            placeholder=L("search_placeholder"),
+            callback=self.search_callback,
         )
 
         # 插入按鈕（右上角，搜尋框旁）
@@ -188,42 +203,42 @@ class HanziComponentSearchTool:
             (-34, 11, 24, 24),
             imageObject=insert_icon,
             callback=self.insert_selected_text,
-            bordered=False
+            bordered=False,
         )
         # 設定 hover/press 效果：使用工具列按鈕樣式
         ns_button = self.w.insertButton.getNSButton()
         ns_button.setBezelStyle_(11)  # NSBezelStyleTexturedRounded
-        ns_button.setButtonType_(0)   # NSButtonTypeMomentaryLight - 點擊時高亮
+        ns_button.setButtonType_(0)  # NSButtonTypeMomentaryLight - 點擊時高亮
         ns_button.setShowsBorderOnlyWhileMouseInside_(True)
         ns_button.setBordered_(True)
-        ns_button.setToolTip_(L('btn_insert_tooltip'))
+        ns_button.setToolTip_(L("btn_insert_tooltip"))
         self.w.insertButton.enable(False)  # 初始禁用
 
         # === 讀取設定 ===
         self.show_derived = self.settings.get("showDerived", False)
 
+        # 筆畫篩選 tick（0..4 為 ±0/±1/±2/±3/±5；5 為關閉），預設關閉
+        raw_tick = self.settings.get("strokeFilterTick", STROKE_FILTER_OFF_TICK)
+        try:
+            self.stroke_filter_tick = int(raw_tick)
+        except (TypeError, ValueError):
+            self.stroke_filter_tick = STROKE_FILTER_OFF_TICK
+        if not 0 <= self.stroke_filter_tick < STROKE_FILTER_TICK_COUNT:
+            self.stroke_filter_tick = STROKE_FILTER_OFF_TICK
+
         # IDS 切換控制區（列表上方獨立一行，初始隱藏）
         self.w.idsSwitcher = vanilla.Group((114, 38, 130, 20))
 
         self.w.idsSwitcher.prevButton = vanilla.Button(
-            (0, 0, 35, 20),
-            "◀",
-            callback=self.prev_ids,
-            sizeStyle="small"
+            (0, 0, 35, 20), "◀", callback=self.prev_ids, sizeStyle="small"
         )
 
         self.w.idsSwitcher.indicator = vanilla.TextBox(
-            (40, 0, 50, 20),
-            "1/2",
-            alignment="center",
-            sizeStyle="small"
+            (40, 0, 50, 20), "1/2", alignment="center", sizeStyle="small"
         )
 
         self.w.idsSwitcher.nextButton = vanilla.Button(
-            (95, 0, 35, 20),
-            "▶",
-            callback=self.next_ids,
-            sizeStyle="small"
+            (95, 0, 35, 20), "▶", callback=self.next_ids, sizeStyle="small"
         )
 
         # 初始隱藏
@@ -231,24 +246,14 @@ class HanziComponentSearchTool:
 
         # === 左側資訊區 ===
         # 預覽區
-        self.w.preview = vanilla.TextBox(
-            (12, 38, 90, 90),
-            "",
-            alignment="center"
-        )
+        self.w.preview = vanilla.TextBox((12, 38, 90, 90), "", alignment="center")
 
         # 詳細資訊區（向下擴展到視窗底部）
-        self.w.content = vanilla.TextEditor(
-            (12, 130, 90, -42),
-            "",
-            readOnly=True
-        )
+        self.w.content = vanilla.TextEditor((12, 130, 90, -42), "", readOnly=True)
 
         # === 中間結果列表 ===
         self.w.resultList = vanilla.List(
-            (114, 60, 130, -42),
-            [],
-            selectionCallback=self.selection_callback
+            (114, 60, 130, -42), [], selectionCallback=self.selection_callback
         )
 
         # 為結果列表設定 TW-Sung 字型
@@ -266,11 +271,7 @@ class HanziComponentSearchTool:
             column.dataCell().setLineBreakMode_(NSLineBreakByClipping)
 
         # === 右側相關字區域 ===
-        self.w.relatedChars = vanilla.TextEditor(
-            (256, 38, -12, -42),
-            "",
-            readOnly=True
-        )
+        self.w.relatedChars = vanilla.TextEditor((256, 38, -12, -42), "", readOnly=True)
 
         # 相關字區域的字型會在 update_related_display 中動態設定
 
@@ -288,12 +289,12 @@ class HanziComponentSearchTool:
             (12, -37, 24, 24),
             imageObject=cns_icon,
             callback=self.open_cns_link,
-            bordered=False
+            bordered=False,
         )
         # 設定 hover/press 效果：使用工具列按鈕樣式
         ns_button = self.w.cnsLinkButton.getNSButton()
         ns_button.setBezelStyle_(11)  # NSBezelStyleTexturedRounded
-        ns_button.setButtonType_(0)   # NSButtonTypeMomentaryLight - 點擊時高亮
+        ns_button.setButtonType_(0)  # NSButtonTypeMomentaryLight - 點擊時高亮
         ns_button.setShowsBorderOnlyWhileMouseInside_(True)
         ns_button.setBordered_(True)
         # 初始狀態：無字符時禁用
@@ -302,34 +303,47 @@ class HanziComponentSearchTool:
         # 深度拆解開關（中間區域下方）
         self.w.deepAnalysisCheckbox = vanilla.CheckBox(
             (114, -36, 80, 22),
-            L('checkbox_deep_analysis'),
+            L("checkbox_deep_analysis"),
             callback=self.toggle_deep_analysis,
-            value=self.deep_analysis
+            value=self.deep_analysis,
         )
 
         # 衍生字勾選框（右側區域左下角）
         self.w.showDerivedCheckbox = vanilla.CheckBox(
-            (256, -36, 60, 22),
-            L('checkbox_derived'),
+            (200, -36, 60, 22),
+            L("checkbox_derived"),
             callback=self.toggle_derived_display,
-            value=self.show_derived
+            value=self.show_derived,
         )
+
+        # 筆畫篩選滑桿（與衍生字 checkbox 之間，向右延伸到篩選按鈕前）
+        # tickMarkCount=6 對應 [±0, ±1, ±2, ±3, ±5, OFF]
+        self.w.strokeFilterSlider = vanilla.Slider(
+            (266, -34, -42, 18),
+            minValue=0,
+            maxValue=STROKE_FILTER_OFF_TICK,
+            value=self.stroke_filter_tick,
+            tickMarkCount=STROKE_FILTER_TICK_COUNT,
+            stopOnTickMarks=True,
+            sizeStyle="small",
+            callback=self.on_stroke_filter_changed,
+        )
+        self._update_stroke_filter_tooltip()
 
         # 篩選按鈕（右下角）
         filter_icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-            "line.3.horizontal.decrease.circle",
-            None
+            "line.3.horizontal.decrease.circle", None
         )
         self.w.filterButton = vanilla.ImageButton(
             (-34, -37, 24, 24),
             imageObject=filter_icon,
             callback=self.show_filter_menu,
-            bordered=False
+            bordered=False,
         )
         # 設定 hover/press 效果：使用工具列按鈕樣式
         ns_button = self.w.filterButton.getNSButton()
         ns_button.setBezelStyle_(11)  # NSBezelStyleTexturedRounded
-        ns_button.setButtonType_(0)   # NSButtonTypeMomentaryLight - 點擊時高亮
+        ns_button.setButtonType_(0)  # NSButtonTypeMomentaryLight - 點擊時高亮
         ns_button.setShowsBorderOnlyWhileMouseInside_(True)
         ns_button.setBordered_(True)
 
@@ -358,7 +372,9 @@ class HanziComponentSearchTool:
         # 建立事件處理器
         self.selectionObserver = SelectionObserverHandler.alloc().initWithTool_(self)
         self.filterMenuHandler = FilterMenuHandler.alloc().initWithTool_(self)
-        self.dialogColorBlockHandler = DialogColorBlockHandler.alloc().initWithTool_(self)
+        self.dialogColorBlockHandler = DialogColorBlockHandler.alloc().initWithTool_(
+            self
+        )
 
         # 初始化顏色篩選 tooltip
         self.update_color_display()
@@ -382,7 +398,7 @@ class HanziComponentSearchTool:
     def _find_data_path(self) -> str:
         """尋找資料庫路徑"""
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(script_dir, 'data', 'ids.pdata')
+        return os.path.join(script_dir, "data", "ids.pdata")
 
     # === 統一篩選選單 ===
 
@@ -395,9 +411,9 @@ class HanziComponentSearchTool:
         # 顏色篩選項目
         color_count = len(self.filter_colors)
         if color_count > 0:
-            color_title = L('menu_color_filter_count').format(count=color_count)
+            color_title = L("menu_color_filter_count").format(count=color_count)
         else:
-            color_title = L('menu_color_filter')
+            color_title = L("menu_color_filter")
         color_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             color_title, "openColorSelector:", ""
         )
@@ -409,7 +425,7 @@ class HanziComponentSearchTool:
 
         # 字型檔項目
         font_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            L('charset_font'), "selectFontCharset:", ""
+            L("charset_font"), "selectFontCharset:", ""
         )
         font_item.setTarget_(self.filterMenuHandler)
         font_item.setState_(NSOnState if not self.use_custom_charset else NSOffState)
@@ -419,7 +435,7 @@ class HanziComponentSearchTool:
         if self.use_custom_charset and self.custom_charset_path:
             custom_title = os.path.basename(self.custom_charset_path)
         else:
-            custom_title = L('charset_custom')
+            custom_title = L("charset_custom")
         custom_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             custom_title, "selectCustomCharset:", ""
         )
@@ -430,9 +446,7 @@ class HanziComponentSearchTool:
         # 在按鈕下方顯示選單
         button = sender.getNSButton()
         menu.popUpMenuPositioningItem_atLocation_inView_(
-            None,
-            (0, button.bounds().size.height),
-            button
+            None, (0, button.bounds().size.height), button
         )
 
     # === 字集管理 ===
@@ -470,12 +484,12 @@ class HanziComponentSearchTool:
         self.currentCharset.clear()
 
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, "r", encoding="utf-8") as f:
                 for line in f:
-                    code = line.split('#')[0].strip()
+                    code = line.split("#")[0].strip()
                     if code:
                         try:
-                            if code.startswith('uni'):
+                            if code.startswith("uni"):
                                 code = code[3:]
                             self.currentCharset.add(chr(int(code, 16)))
                         except ValueError:
@@ -484,8 +498,9 @@ class HanziComponentSearchTool:
             # 更新搜尋結果
             self.search_callback(None)
 
-        except Exception as e:
+        except Exception:
             import traceback
+
             print(traceback.format_exc())
             # 載入失敗，切回字型檔
             self.use_custom_charset = False
@@ -554,7 +569,7 @@ class HanziComponentSearchTool:
         unicode_candidates = []
 
         # 優先使用 glyph.unicodes（如果存在）
-        if hasattr(glyph, 'unicodes') and glyph.unicodes:
+        if hasattr(glyph, "unicodes") and glyph.unicodes:
             unicode_candidates = list(glyph.unicodes)
         elif glyph.unicode:
             # 降級到單值
@@ -568,17 +583,21 @@ class HanziComponentSearchTool:
             if glyph.name:
                 base_unicode = None
 
-                if glyph.name.startswith('uni'):
+                if glyph.name.startswith("uni"):
                     # 格式：uni + 4-5 位十六進位
                     name_without_prefix = glyph.name[3:]  # 移除 'uni'
-                    base_unicode = name_without_prefix.split('.')[0]  # 移除 .001 等後綴
-                elif glyph.name.startswith('u') and not glyph.name.startswith('uni'):
+                    base_unicode = name_without_prefix.split(".")[0]  # 移除 .001 等後綴
+                elif glyph.name.startswith("u") and not glyph.name.startswith("uni"):
                     # 格式：u + 5-6 位十六進位（用於 U+10000 以上）
                     name_without_prefix = glyph.name[1:]  # 移除 'u'
-                    base_unicode = name_without_prefix.split('.')[0]  # 移除 .001 等後綴
+                    base_unicode = name_without_prefix.split(".")[0]  # 移除 .001 等後綴
 
                 # 驗證格式（4-6 位十六進位）
-                if base_unicode and len(base_unicode) in [4, 5, 6] and all(c in '0123456789ABCDEFabcdef' for c in base_unicode):
+                if (
+                    base_unicode
+                    and len(base_unicode) in [4, 5, 6]
+                    and all(c in "0123456789ABCDEFabcdef" for c in base_unicode)
+                ):
                     unicode_candidates = [base_unicode.upper()]
 
         # 遍歷所有候選值，找到第一個在資料庫中存在的
@@ -661,6 +680,7 @@ class HanziComponentSearchTool:
 
         except:
             import traceback
+
             print(traceback.format_exc())
 
     def toggle_auto_fetch(self, sender):
@@ -725,15 +745,21 @@ class HanziComponentSearchTool:
                 input_text = input_text[0]
 
         # 處理 Unicode 格式
-        if input_text.startswith(('uni', 'UNI')) and len(input_text) == 7:
-            input_text = 'U+' + input_text[3:].upper()
-        elif input_text.startswith(('u', 'U')) and len(input_text) == 6 and not input_text.startswith(('U+', 'u+')):
-            input_text = 'U+' + input_text[1:].upper()
+        if input_text.startswith(("uni", "UNI")) and len(input_text) == 7:
+            input_text = "U+" + input_text[3:].upper()
+        elif (
+            input_text.startswith(("u", "U"))
+            and len(input_text) == 6
+            and not input_text.startswith(("U+", "u+"))
+        ):
+            input_text = "U+" + input_text[1:].upper()
 
         # Unicode 查詢
-        if input_text.startswith(('U+', 'u+')) or re.match(r'^[0-9A-Fa-f]{4,5}$', input_text):
-            if not input_text.upper().startswith('U+'):
-                input_text = 'U+' + input_text.upper()
+        if input_text.startswith(("U+", "u+")) or re.match(
+            r"^[0-9A-Fa-f]{4,5}$", input_text
+        ):
+            if not input_text.upper().startswith("U+"):
+                input_text = "U+" + input_text.upper()
             else:
                 input_text = input_text.upper()
 
@@ -765,14 +791,18 @@ class HanziComponentSearchTool:
                         self.all_results = []
                         depth = 10 if self.deep_analysis else 1
                         for char in related_chars[:5]:  # 限制結果數量避免過慢
-                            self.all_results.extend(self.core.decompose(char, max_depth=depth))
+                            self.all_results.extend(
+                                self.core.decompose(char, max_depth=depth)
+                            )
                     else:
                         return  # 找不到結果，保持原顯示
                 else:
                     return  # 找不到結果，保持原顯示
 
         # 生成顯示結果並同時存儲
-        self.display_results = [f"{tree}{content}" for tree, content in self.all_results]
+        self.display_results = [
+            f"{tree}{content}" for tree, content in self.all_results
+        ]
         self.w.resultList.set(self.display_results)
         self._adjust_result_list_column_width()
 
@@ -784,7 +814,7 @@ class HanziComponentSearchTool:
 
     def _extract_valid_character_from_results(self, results: List) -> Optional[str]:
         """從搜尋結果中提取有效字符"""
-        idc_chars = '⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾'
+        idc_chars = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾"
 
         for tree, content in results:
             if not content.strip():
@@ -804,26 +834,30 @@ class HanziComponentSearchTool:
         self.settings.set("deepAnalysis", self.deep_analysis)
 
         # 保存當前選中的 IDS 索引
-        saved_ids_index = getattr(self, 'current_ids_index', 0)
+        saved_ids_index = getattr(self, "current_ids_index", 0)
 
         # 重新執行搜尋以更新結果
         self.search_callback(None)
 
         # 恢復 IDS 索引並刷新顯示
-        if hasattr(self, 'available_ids') and len(self.available_ids) > saved_ids_index:
+        if hasattr(self, "available_ids") and len(self.available_ids) > saved_ids_index:
             self.current_ids_index = saved_ids_index
             self.refresh_ids_display()
 
     def prev_ids(self, sender):
         """切換到上一個 IDS"""
         if len(self.available_ids) > 1:
-            self.current_ids_index = (self.current_ids_index - 1) % len(self.available_ids)
+            self.current_ids_index = (self.current_ids_index - 1) % len(
+                self.available_ids
+            )
             self.refresh_ids_display()
 
     def next_ids(self, sender):
         """切換到下一個 IDS"""
         if len(self.available_ids) > 1:
-            self.current_ids_index = (self.current_ids_index + 1) % len(self.available_ids)
+            self.current_ids_index = (self.current_ids_index + 1) % len(
+                self.available_ids
+            )
             self.refresh_ids_display()
 
     def refresh_ids_display(self):
@@ -847,7 +881,9 @@ class HanziComponentSearchTool:
                         ids_lines.append(f"  {ids}")
                 ids_display = "\n".join(ids_lines)
 
-            detail_text = f"{char_data['char']}\n{char_data['unicode'].upper()}\n{ids_display}"
+            detail_text = (
+                f"{char_data['char']}\n{char_data['unicode'].upper()}\n{ids_display}"
+            )
             detail_text = self.core.clean_display_text(detail_text)
             # 使用動態字型的 NSAttributedString
             attr_string = self.create_attributed_string(detail_text, CONTENT_FONT_SIZE)
@@ -855,14 +891,20 @@ class HanziComponentSearchTool:
             text_view.textStorage().setAttributedString_(attr_string)
 
             # 更新指示器
-            self.w.idsSwitcher.indicator.set(f"{self.current_ids_index + 1}/{len(self.available_ids)}")
+            self.w.idsSwitcher.indicator.set(
+                f"{self.current_ids_index + 1}/{len(self.available_ids)}"
+            )
 
             # 重新生成拆解樹（基於當前選中的 IDS）
             depth = 10 if self.deep_analysis else 1
-            self.all_results = self.core.decompose(self.current_char, max_depth=depth, variant_index=self.current_ids_index)
+            self.all_results = self.core.decompose(
+                self.current_char, max_depth=depth, variant_index=self.current_ids_index
+            )
 
             # 更新結果列表顯示
-            self.display_results = [f"{tree}{content}" for tree, content in self.all_results]
+            self.display_results = [
+                f"{tree}{content}" for tree, content in self.all_results
+            ]
             self.w.resultList.set(self.display_results)
             self._adjust_result_list_column_width()
 
@@ -886,7 +928,7 @@ class HanziComponentSearchTool:
             char = self.core.extract_character(selected_item)
 
             # IDC 符號不執行任何動作
-            idc_chars = '⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾'
+            idc_chars = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾"
             if char in idc_chars:
                 return
 
@@ -902,8 +944,8 @@ class HanziComponentSearchTool:
         if data:
             char_data = data[char]
             # 使用 ids_1 和 ids_2 而非 ids
-            ids_1 = char_data.get('ids_1', '')
-            ids_2 = char_data.get('ids_2', '')
+            ids_1 = char_data.get("ids_1", "")
+            ids_2 = char_data.get("ids_2", "")
 
             # 收集所有可用的 IDS
             self.available_ids = [ids for ids in [ids_1, ids_2] if ids]
@@ -926,9 +968,11 @@ class HanziComponentSearchTool:
                     ids_display = "\n".join(ids_lines)
             else:
                 # 無 IDS 資料時顯示本字
-                ids_display = char_data['char']
+                ids_display = char_data["char"]
 
-            detail_text = f"{char_data['char']}\n{char_data['unicode'].upper()}\n{ids_display}"
+            detail_text = (
+                f"{char_data['char']}\n{char_data['unicode'].upper()}\n{ids_display}"
+            )
             # 清理可能造成顯示問題的字符
             detail_text = self.core.clean_display_text(detail_text)
             # 使用動態字型的 NSAttributedString
@@ -939,7 +983,9 @@ class HanziComponentSearchTool:
             # 控制切換器顯示
             if len(self.available_ids) > 1:
                 self.w.idsSwitcher.show(True)
-                self.w.idsSwitcher.indicator.set(f"{self.current_ids_index + 1}/{len(self.available_ids)}")
+                self.w.idsSwitcher.indicator.set(
+                    f"{self.current_ids_index + 1}/{len(self.available_ids)}"
+                )
             else:
                 self.w.idsSwitcher.show(False)
 
@@ -948,7 +994,7 @@ class HanziComponentSearchTool:
         self.update_preview(char)
 
         # 更新全字庫按鈕狀態
-        if hasattr(self.w, 'cnsLinkButton'):
+        if hasattr(self.w, "cnsLinkButton"):
             self.w.cnsLinkButton.enable(bool(self.current_char))
 
     # === 顏色選擇器 ===
@@ -964,9 +1010,7 @@ class HanziComponentSearchTool:
 
         # 標題列：左側標題，右側輔助按鈕
         self.colorSheet.title = vanilla.TextBox(
-            (16, 14, 60, 17),
-            L('color_picker_title'),
-            sizeStyle="small"
+            (16, 14, 60, 17), L("color_picker_title"), sizeStyle="small"
         )
 
         # 輔助按鈕（標題列右側，SF Symbol 圖示）
@@ -978,9 +1022,9 @@ class HanziComponentSearchTool:
             (-60, 12, 20, 20),
             imageObject=select_all_icon,
             callback=self.select_all_colors,
-            bordered=False
+            bordered=False,
         )
-        self.colorSheet.selectAllButton.getNSButton().setToolTip_(L('btn_select_all'))
+        self.colorSheet.selectAllButton.getNSButton().setToolTip_(L("btn_select_all"))
 
         deselect_icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
             "xmark.circle", None
@@ -989,9 +1033,9 @@ class HanziComponentSearchTool:
             (-36, 12, 20, 20),
             imageObject=deselect_icon,
             callback=self.deselect_all_colors,
-            bordered=False
+            bordered=False,
         )
-        self.colorSheet.deselectAllButton.getNSButton().setToolTip_(L('btn_clear'))
+        self.colorSheet.deselectAllButton.getNSButton().setToolTip_(L("btn_clear"))
 
         # 色塊容器（左對齊，與標題對齊）
         # 寬度：6 × 20 + 5 × 4 = 140px，高度：2 × 20 + 1 × 4 = 44px
@@ -1022,9 +1066,7 @@ class HanziComponentSearchTool:
             r, g, b, _ = GLYPH_COLOR_MAP[color_id]
 
             # 建立 NSBox 作為色塊
-            color_box = NSBox.alloc().initWithFrame_(
-                ((x, y), (chip_size, chip_size))
-            )
+            color_box = NSBox.alloc().initWithFrame_(((x, y), (chip_size, chip_size)))
             color_box.setBoxType_(NSBoxCustom)
 
             # 設定填充顏色
@@ -1043,8 +1085,7 @@ class HanziComponentSearchTool:
 
             # 添加點擊手勢識別器
             click_recognizer = NSClickGestureRecognizer.alloc().initWithTarget_action_(
-                self.dialogColorBlockHandler,
-                "handleBlockClick:"
+                self.dialogColorBlockHandler, "handleBlockClick:"
             )
             color_box.addGestureRecognizer_(click_recognizer)
 
@@ -1055,16 +1096,16 @@ class HanziComponentSearchTool:
         # 兩按鈕寬 60*2 + 間距 6 = 126，起始 x = (175-126)/2 ≈ 25
         self.colorSheet.cancelButton = vanilla.Button(
             (25, -38, 60, 24),
-            L('btn_cancel'),
+            L("btn_cancel"),
             callback=self.cancel_color_selection,
-            sizeStyle="small"
+            sizeStyle="small",
         )
 
         self.colorSheet.applyButton = vanilla.Button(
             (91, -38, 60, 24),
-            L('btn_apply'),
+            L("btn_apply"),
             callback=self.apply_color_selection,
-            sizeStyle="small"
+            sizeStyle="small",
         )
 
         self.colorSheet.open()
@@ -1148,9 +1189,9 @@ class HanziComponentSearchTool:
         """更新篩選按鈕的 tooltip 顯示選取數量"""
         count = len(self.filter_colors)
         if count == 0:
-            tooltip = L('tooltip_no_filter')
+            tooltip = L("tooltip_no_filter")
         else:
-            tooltip = L('tooltip_filter_count').format(count=count)
+            tooltip = L("tooltip_filter_count").format(count=count)
 
         self.w.filterButton.getNSButton().setToolTip_(tooltip)
 
@@ -1166,6 +1207,44 @@ class HanziComponentSearchTool:
         # 更新顯示
         self.update_related_display()
 
+    # === 筆畫篩選 ===
+
+    def _stroke_filter_max_diff(self) -> Optional[int]:
+        """將目前 tick 轉換為 filter_by_strokes 的 max_diff 參數。
+
+        OFF tick → None（不篩選）；其他 tick → STROKE_FILTER_VALUES 對應值。
+        """
+        if self.stroke_filter_tick >= STROKE_FILTER_OFF_TICK:
+            return None
+        return STROKE_FILTER_VALUES[self.stroke_filter_tick]
+
+    def _update_stroke_filter_tooltip(self):
+        """更新滑桿 tooltip 顯示當前筆畫差設定"""
+        diff = self._stroke_filter_max_diff()
+        label = L("slider_stroke_label")
+        if diff is None:
+            current = f"{label}{L('slider_stroke_off')}"
+        else:
+            current = f"{label}{diff}"
+        tooltip = f"{current} — {L('tooltip_stroke_filter')}"
+        try:
+            self.w.strokeFilterSlider.getNSSlider().setToolTip_(tooltip)
+        except Exception:
+            pass
+
+    def on_stroke_filter_changed(self, sender):
+        """筆畫篩選滑桿 callback：四捨五入到最近的 tick"""
+        new_tick = int(round(sender.get()))
+        if not 0 <= new_tick < STROKE_FILTER_TICK_COUNT:
+            return
+        if new_tick == self.stroke_filter_tick:
+            return
+
+        self.stroke_filter_tick = new_tick
+        self.settings.set("strokeFilterTick", new_tick)
+        self._update_stroke_filter_tooltip()
+        self.update_related_display()
+
     def update_related_display(self, char=None):
         """
         更新相關字符顯示
@@ -1174,7 +1253,7 @@ class HanziComponentSearchTool:
         char: 可選，指定要顯示的字符。若為 None 則使用 self.current_char。
         """
         # 若傳入 char 則使用，否則使用 self.current_char
-        display_char = char if char is not None else getattr(self, 'current_char', None)
+        display_char = char if char is not None else getattr(self, "current_char", None)
         if display_char is None:
             return
 
@@ -1182,7 +1261,7 @@ class HanziComponentSearchTool:
         charset = self.currentCharset if self.currentCharset else None
 
         # 取得關聯字結果（透過 core），使用當前選中的 IDS 拆法
-        variant_index = getattr(self, 'current_ids_index', 0)
+        variant_index = getattr(self, "current_ids_index", 0)
         sisters = self.core.find_sister_characters(display_char, charset, variant_index)
         related_chars = set()
 
@@ -1191,17 +1270,24 @@ class HanziComponentSearchTool:
         if is_independent_char:
             display_lines.append(display_char)
 
+        # 預先計算筆畫篩選參數（避免每次迴圈重複）
+        stroke_max_diff = self._stroke_filter_max_diff()
+
         # 顯示同字根（獨體字跳過此部分）
         if not is_independent_char:
             for positions, chars in sisters.get("結構相同部件同位", {}).items():
                 # 套用顏色篩選（透過 adapter）
                 filtered_chars = chars
-                if hasattr(self, 'filter_colors') and len(self.filter_colors) > 0:
+                if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
                     font = self.adapter.get_current_font()
                     filtered_chars = self.adapter.filter_by_color(
-                        filtered_chars,
-                        font,
-                        self.filter_colors
+                        filtered_chars, font, self.filter_colors
+                    )
+
+                # 套用筆畫篩選（OFF 時 stroke_max_diff 為 None → 跳過）
+                if stroke_max_diff is not None:
+                    filtered_chars = self.core.filter_by_strokes(
+                        filtered_chars, display_char, stroke_max_diff
                     )
 
                 if filtered_chars:
@@ -1222,18 +1308,22 @@ class HanziComponentSearchTool:
                     filtered_chars = [c for c in chars if c not in related_chars]
 
                     # 套用顏色篩選（透過 adapter）
-                    if hasattr(self, 'filter_colors') and len(self.filter_colors) > 0:
+                    if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
                         font = self.adapter.get_current_font()
                         filtered_chars = self.adapter.filter_by_color(
-                            filtered_chars,
-                            font,
-                            self.filter_colors
+                            filtered_chars, font, self.filter_colors
+                        )
+
+                    # 套用筆畫篩選
+                    if stroke_max_diff is not None:
+                        filtered_chars = self.core.filter_by_strokes(
+                            filtered_chars, display_char, stroke_max_diff
                         )
 
                     if filtered_chars:
                         display_lines.append(f"{component} {''.join(filtered_chars)}")
 
-        display_text = '\n'.join(display_lines) if display_lines else display_char
+        display_text = "\n".join(display_lines) if display_lines else display_char
         # 清理可能造成顯示問題的字符
         display_text = self.core.clean_display_text(display_text)
 
@@ -1265,8 +1355,8 @@ class HanziComponentSearchTool:
                 NSFontAttributeName: font,
                 NSForegroundColorAttributeName: NSColor.labelColor(),
                 NSBaselineOffsetAttributeName: baseline_offset,
-                NSParagraphStyleAttributeName: paragraph_style
-            }
+                NSParagraphStyleAttributeName: paragraph_style,
+            },
         )
         self.w.preview.set(preview_text)
 
@@ -1295,17 +1385,13 @@ class HanziComponentSearchTool:
         try:
             # 建立基礎 CTFont（系統 UI 字型包含完整的 cascade list）
             base_ct_font = CoreText.CTFontCreateWithName(
-                ".AppleSystemUIFont",
-                size,
-                None
+                ".AppleSystemUIFont", size, None
             )
 
             # 使用 CTFontCreateForString 尋找能顯示該字符的字型
             # range: (location, length)
             fallback_ct_font = CoreText.CTFontCreateForString(
-                base_ct_font,
-                char,
-                (0, len(char))
+                base_ct_font, char, (0, len(char))
             )
 
             # 釋放 base_ct_font（不再需要，避免記憶體洩漏）
@@ -1330,7 +1416,9 @@ class HanziComponentSearchTool:
 
             # 快取管理：超過上限時清除一半
             if len(self._font_cache) >= self._CACHE_MAX_SIZE:
-                keys_to_remove = list(self._font_cache.keys())[:self._CACHE_MAX_SIZE // 2]
+                keys_to_remove = list(self._font_cache.keys())[
+                    : self._CACHE_MAX_SIZE // 2
+                ]
                 for key in keys_to_remove:
                     del self._font_cache[key]
 
@@ -1379,13 +1467,13 @@ class HanziComponentSearchTool:
             # 為 CJK 相關字符使用 TW-Sung 字型
             # 包含完整的 CJK 區塊以確保一致性
             is_cjk_related = (
-                0x2E80 <= code_point <= 0x2EFF or   # CJK Radicals Supplement（部首補充）
-                0x2F00 <= code_point <= 0x2FDF or   # Kangxi Radicals（康熙部首）
-                0x2FF0 <= code_point <= 0x2FFF or   # IDC（表意文字描述字符 ⿰⿱⿲）
-                0x3400 <= code_point <= 0x4DBF or   # CJK Extension A
-                0x4E00 <= code_point <= 0x9FFF or   # CJK Unified Ideographs
-                0xF900 <= code_point <= 0xFAFF or   # CJK Compatibility Ideographs
-                code_point >= 0x20000               # CJK Extension B-H+
+                0x2E80 <= code_point <= 0x2EFF  # CJK Radicals Supplement（部首補充）
+                or 0x2F00 <= code_point <= 0x2FDF  # Kangxi Radicals（康熙部首）
+                or 0x2FF0 <= code_point <= 0x2FFF  # IDC（表意文字描述字符 ⿰⿱⿲）
+                or 0x3400 <= code_point <= 0x4DBF  # CJK Extension A
+                or 0x4E00 <= code_point <= 0x9FFF  # CJK Unified Ideographs
+                or 0xF900 <= code_point <= 0xFAFF  # CJK Compatibility Ideographs
+                or code_point >= 0x20000  # CJK Extension B-H+
             )
             if is_cjk_related:
                 font = self.get_font_for_char(char, size)
@@ -1395,7 +1483,7 @@ class HanziComponentSearchTool:
             # 建立屬性字典
             attributes = {
                 NSFontAttributeName: font,
-                NSForegroundColorAttributeName: text_color
+                NSForegroundColorAttributeName: text_color,
             }
 
             # 加入字距和行距（僅用於右側相關字區域）
@@ -1420,7 +1508,7 @@ class HanziComponentSearchTool:
             self.selectionObserver,
             "textViewSelectionDidChange:",
             "NSTextViewDidChangeSelectionNotification",
-            textView
+            textView,
         )
 
     def on_selection_changed(self, notification):
@@ -1448,21 +1536,25 @@ class HanziComponentSearchTool:
         if not self.current_char:
             return
 
-        unicode_hex = format(ord(self.current_char), 'X')
+        unicode_hex = format(ord(self.current_char), "X")
 
         # 根據 Glyphs 介面語言決定全字庫語言
         # la=0 中文版（繁中/簡中/日文）, la=1 英文版（其他語言）
         try:
             from GlyphsApp import Glyphs
+
             glyphs_lang = Glyphs.defaults.get("AppleLanguages", ["en"])[0]
             # 中日文使用者使用中文版，其他使用英文版
-            la = 0 if glyphs_lang.startswith("zh") or glyphs_lang.startswith("ja") else 1
+            la = (
+                0 if glyphs_lang.startswith("zh") or glyphs_lang.startswith("ja") else 1
+            )
         except Exception:
             la = 1  # fallback 使用英文版
 
         url = f"https://www.cns11643.gov.tw/searchQ.jsp?WORD={unicode_hex}&la={la}"
 
         import webbrowser
+
         webbrowser.open(url)
 
     # === 視窗焦點事件（Issue #31）===

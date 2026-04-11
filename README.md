@@ -17,6 +17,7 @@
 - **衍生字查詢** — 找出以本字為部件的衍生字
 - **字集篩選** — 預設顯示字型檔內的字，亦可使用自訂字集
 - **顏色篩選** — 依 Glyphs 顏色標籤過濾結果
+- **筆畫數篩選** — 用底部滑桿選擇 ±0/±1/±2/±3/±5 筆畫差，快速從相關字中找到筆畫接近主字的造字參考（資料源自 CNS11643）
 - **全字庫連結** — 一鍵查詢 CNS11643 全字庫資料
 
 ## 安裝
@@ -45,7 +46,8 @@
 
 ## 資料來源
 
-IDS 資料來自 [CHISE IDS database](https://www.chise.org/ids/) 的 CNS 及 Unicode 資料，收錄 98,662 個字符。
+- **IDS 拆解資料** — [CHISE IDS database](https://www.chise.org/ids/) 的 CNS 及 Unicode 資料，收錄超過 10 萬個字符
+- **筆畫數資料** — [CNS11643-OpenData](https://github.com/yintzuyuan/CNS11643-OpenData) 的 `Tables/Properties/CNS_stroke.txt`，覆蓋約 7.7 萬字（74.8%）。超出 CNS 範圍的 Ext-G/H 罕字筆畫為空，僅在「關閉筆畫篩選」時顯示
 
 ## 授權
 
@@ -82,6 +84,7 @@ A [Glyphs](https://glyphsapp.com/) font editor plugin for decomposing Chinese ch
 - **Derived Characters** — Find characters using this character as a component
 - **Charset Filtering** — Filter by current font glyphs or custom charset
 - **Color Filtering** — Filter by Glyphs color labels
+- **Stroke Count Filtering** — Discrete bottom slider (±0/±1/±2/±3/±5) to narrow related characters by stroke count difference from the current character (data from CNS11643)
 - **CNS Link** — Quick lookup in CNS11643 database
 
 ## Installation
@@ -108,9 +111,10 @@ Download `HanziIDSComponentExplorer.glyphsPlugin` and double-click to install.
 - Glyphs 3.0+
 - macOS 10.9+
 
-## Data Source
+## Data Sources
 
-IDS data from [CHISE IDS database](https://www.chise.org/ids/) (CNS and Unicode), covering 98,662 characters.
+- **IDS decomposition** — [CHISE IDS database](https://www.chise.org/ids/) (CNS and Unicode), covering over 100,000 characters
+- **Stroke counts** — `Tables/Properties/CNS_stroke.txt` from [CNS11643-OpenData](https://github.com/yintzuyuan/CNS11643-OpenData), covering ~77k characters (74.8%). Characters outside CNS11643 (Ext-G/H rare ideographs) have no stroke data and are only shown when stroke filtering is OFF
 
 ## License
 
