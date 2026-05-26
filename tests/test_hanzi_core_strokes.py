@@ -191,3 +191,44 @@ class TestFilterByStrokes:
         result = core_with_strokes.filter_by_strokes(chars, base_char="二", max_diff=2)
         # base 二=2，±2 → 六(6) 不通過、一(1)、三(3)、二(2) 通過
         assert result == ["一", "三", "二"]
+
+
+class TestFilterByStrokeValue:
+    """測試 filter_by_stroke_value（數值基準篩選，多部件搜尋以部件筆畫加總為基準）"""
+
+    def test_none_max_diff_returns_all(self, core_with_strokes):
+        """max_diff=None → 不篩選，全部回傳"""
+        chars = ["一", "二", "三"]
+        assert core_with_strokes.filter_by_stroke_value(chars, 7, None) == chars
+
+    def test_none_base_returns_all(self, core_with_strokes):
+        """基準為 None（如部件無筆畫資料）→ 回退全顯示"""
+        chars = ["一", "二", "三"]
+        assert core_with_strokes.filter_by_stroke_value(chars, None, 2) == chars
+
+    def test_exact_match(self, core_with_strokes):
+        """base=7, max_diff=0 → 只保留 7 畫（七）"""
+        chars = ["一", "二", "三", "五", "六", "七", "十"]
+        assert core_with_strokes.filter_by_stroke_value(chars, 7, 0) == ["七"]
+
+    def test_within_range(self, core_with_strokes):
+        """base=4, max_diff=2 → 2~6 畫：二(2)、三(3)、五(4)、六(6)"""
+        chars = ["一", "二", "三", "五", "六", "七", "十"]
+        result = core_with_strokes.filter_by_stroke_value(chars, 4, 2)
+        assert result == ["二", "三", "五", "六"]
+
+    def test_excludes_missing_stroke_data(self, core_with_strokes):
+        """無筆畫資料的字一律排除"""
+        chars = ["一", "二", "無"]
+        result = core_with_strokes.filter_by_stroke_value(chars, 2, 1)
+        assert "無" not in result
+
+    def test_preserves_order(self, core_with_strokes):
+        """結果順序與輸入一致"""
+        chars = ["六", "一", "三", "二"]
+        # base=2 ±2 → 0~4：六(6) 排除；一(1)、三(3)、二(2) 通過
+        assert core_with_strokes.filter_by_stroke_value(chars, 2, 2) == [
+            "一",
+            "三",
+            "二",
+        ]

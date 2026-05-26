@@ -154,6 +154,12 @@ class HanziComponentSearchTool:
         self.deep_analysis = self.settings.get("deepAnalysis", False)
         self.show_derived = False
 
+        # 多部件 AND 搜尋模式狀態
+        self.multi_component_mode = False  # 是否處於多部件模式
+        self.multi_component_parts = []  # 當前輸入的部件清單（用於回到交集視角）
+        self.saved_show_derived = False  # 進入多部件模式前的衍生字開關，離開時恢復
+        self.saved_deep_analysis = False  # 進入多部件模式前的深度拆解開關，離開時恢復
+
         # 自動抓取設定（固定為 True）
         self.auto_fetch_enabled = True
         self.last_glyph_name = None
@@ -749,9 +755,15 @@ class HanziComponentSearchTool:
             # 手動模式：使用搜尋框內容
             self.current_char = None  # 清除自動模式的字符
 
-            # 多字輸入時只取第一個字（Issue #31）
-            if len(input_text) > 1 and ord(input_text[0]) > 127:
-                input_text = input_text[0]
+            # 多部件 AND 搜尋：輸入多個漢字時，進入多部件模式（中欄列部件、右欄列交集）
+            # 原本只取第一字（Issue #31），改為 AND 組合；無條件觸發，不受衍生字開關限制
+            parts = [c for c in input_text if not c.isspace()]
+            if len(parts) > 1 and all(ord(c) > 127 for c in parts):
+                self._enter_multi_component_mode(parts)
+                return
+
+        # 非多部件輸入：若先前在多部件模式，退出以恢復衍生字開關狀態
+        self._exit_multi_component_mode()
 
         # 處理 Unicode 格式
         if input_text.startswith(("uni", "UNI")) and len(input_text) == 7:
@@ -808,6 +820,13 @@ class HanziComponentSearchTool:
                 else:
                     return  # 找不到結果，保持原顯示
 
+        self._render_results()
+
+    def _render_results(self):
+        """將 self.all_results 渲染到中欄列表，並以第一個有效字更新左/右欄。
+
+        供單字、Unicode、多部件 AND 三條搜尋路徑共用。
+        """
         # 生成顯示結果並同時存儲
         self.display_results = [
             f"{tree}{content}" for tree, content in self.all_results
@@ -815,11 +834,91 @@ class HanziComponentSearchTool:
         self.w.resultList.set(self.display_results)
         self._adjust_result_list_column_width()
 
-        # 提取第一個有效字符
+        # 提取第一個有效字符，連動更新左欄（預覽+詳資）與右欄（同字根）
         if self.all_results:
             first_char = self._extract_valid_character_from_results(self.all_results)
             if first_char:
                 self.update_char_info(first_char)
+
+    # === 多部件 AND 搜尋模式 ===
+
+    def _enter_multi_component_mode(self, parts):
+        """進入多部件 AND 模式：中欄列輸入部件、右欄列交集、鎖定衍生字開關。
+
+        中欄第一行為原始輸入（AND 交集錨點），其後一行一個部件；
+        點選第一行回到交集、點選部件看該部件衍生字（見 selection_callback）。
+
+        parts: 輸入部件清單，保留原始輸入（已過濾空白，如 ['氵', '木']）
+        """
+        # 鎖定衍生字與深度拆解開關：多部件搜尋本質為衍生字邏輯的 AND 版本，
+        # 且交集以「遞迴展開到葉部件」為基礎，深度拆解恆為開啟
+        if not self.multi_component_mode:
+            self.saved_show_derived = self.show_derived
+            self.saved_deep_analysis = self.deep_analysis
+        self.multi_component_mode = True
+        self.multi_component_parts = parts
+        self.show_derived = True
+        self.w.showDerivedCheckbox.set(True)
+        self.w.showDerivedCheckbox.enable(False)
+        self.deep_analysis = True
+        self.w.deepAnalysisCheckbox.set(True)
+        self.w.deepAnalysisCheckbox.enable(False)
+
+        # 中欄：第一行原始輸入（交集錨點），其後一行一個部件
+        original = "".join(parts)
+        self.display_results = [original] + parts
+        self.w.resultList.set(self.display_results)
+        self._adjust_result_list_column_width()
+
+        # 右欄：AND 交集；左欄：清空，待點選中欄某字才填
+        self._render_intersection(parts)
+        self._clear_left_panel()
+
+    def _exit_multi_component_mode(self):
+        """離開多部件模式：解鎖並恢復衍生字與深度拆解開關的原設定。"""
+        if not self.multi_component_mode:
+            return
+        self.multi_component_mode = False
+        self.multi_component_parts = []
+        self.show_derived = self.saved_show_derived
+        self.w.showDerivedCheckbox.enable(True)
+        self.w.showDerivedCheckbox.set(self.show_derived)
+        self.deep_analysis = self.saved_deep_analysis
+        self.w.deepAnalysisCheckbox.enable(True)
+        self.w.deepAnalysisCheckbox.set(self.deep_analysis)
+
+    def _render_intersection(self, parts):
+        """將「同時包含所有 parts 部件」的交集字渲染到右欄。
+
+        套用筆畫篩選時，基準為所有輸入部件的筆畫數加總（如 氵木 = 3+4 = 7）；
+        任一部件無筆畫資料則不篩選（回退全顯示）。
+        """
+        charset = self.currentCharset if self.currentCharset else None
+        related = self.core.search_all(parts, charset)
+
+        # 筆畫篩選：基準 = 各輸入部件筆畫數加總
+        max_diff = self._stroke_filter_max_diff()
+        if max_diff is not None:
+            part_strokes = [self.core.get_stroke_count(p) for p in parts]
+            if None not in part_strokes:
+                base = sum(s for s in part_strokes if s is not None)
+                related = self.core.filter_by_stroke_value(related, base, max_diff)
+
+        display_text = self.core.clean_display_text("".join(related))
+        attr_string = self.create_attributed_string(
+            display_text, RELATED_CHARS_FONT_SIZE, use_enhanced_spacing=True
+        )
+        text_view = self.w.relatedChars.getNSTextView()
+        text_view.textStorage().setAttributedString_(attr_string)
+
+    def _clear_left_panel(self):
+        """清空左欄（預覽 + 詳資）；多部件模式無單一焦點字時使用。"""
+        self.current_char = None
+        self.w.preview.set("")
+        self.w.content.set("")
+        self.w.idsSwitcher.show(False)
+        if hasattr(self.w, "cnsLinkButton"):
+            self.w.cnsLinkButton.enable(False)
 
     def _extract_valid_character_from_results(self, results: List) -> Optional[str]:
         """從搜尋結果中提取有效字符"""
@@ -930,20 +1029,33 @@ class HanziComponentSearchTool:
         - 漢字：只更新右側相關字區域，左側保持不變
         """
         selection = sender.getSelection()
-        if selection:
-            selected_item = sender[selection[0]]
+        if not selection:
+            return
+        selected_item = sender[selection[0]]
 
-            # 使用 core 的字符提取邏輯
-            char = self.core.extract_character(selected_item)
+        # 多部件模式：第一行＝原始查詢（回到 AND 交集）；其餘行＝單一部件（看該部件衍生字）
+        if self.multi_component_mode:
+            if selected_item == "".join(self.multi_component_parts):
+                self._render_intersection(self.multi_component_parts)
+                self._clear_left_panel()
+            else:
+                char = self.core.extract_character(selected_item)
+                if char and self.core.is_valid_character(char):
+                    # 更新左欄（該部件資訊）與右欄（該部件衍生字，因開關已鎖定為開）
+                    self.update_char_info(char)
+            return
 
-            # IDC 符號不執行任何動作
-            idc_chars = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾"
-            if char in idc_chars:
-                return
+        # 使用 core 的字符提取邏輯
+        char = self.core.extract_character(selected_item)
 
-            if char and self.core.is_valid_character(char):
-                # 只更新右側相關字區域，不更新左側
-                self.update_related_display(char)
+        # IDC 符號不執行任何動作
+        idc_chars = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾"
+        if char in idc_chars:
+            return
+
+        if char and self.core.is_valid_character(char):
+            # 只更新右側相關字區域，不更新左側
+            self.update_related_display(char)
 
     def update_char_info(self, char):
         """更新字符資訊（支援 IDS 切換）"""
@@ -1266,7 +1378,10 @@ class HanziComponentSearchTool:
         self.stroke_filter_tick = new_tick
         self.settings.set("strokeFilterTick", new_tick)
         self._refresh_stroke_filter_display()
-        self.update_related_display()
+        if self.multi_component_mode:
+            self._render_intersection(self.multi_component_parts)
+        else:
+            self.update_related_display()
 
     def update_related_display(self, char=None):
         """

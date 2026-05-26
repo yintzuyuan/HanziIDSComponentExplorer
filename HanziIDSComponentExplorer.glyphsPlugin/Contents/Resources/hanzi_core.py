@@ -13,6 +13,7 @@ import re
 import gzip
 import pickle
 import unicodedata
+from collections import Counter
 from typing import Dict, List, Tuple, Union, Optional, Set
 from pathlib import Path
 
@@ -175,6 +176,9 @@ class HanziCore:
                     comp = _normalize_cjk_variant(comp)
                     self._component_index.setdefault(comp, set()).add(char)
 
+        # 葉部件反向索引（lazy 建立，見 _ensure_leaf_index）
+        self._leaf_index: Optional[Dict[str, Set[str]]] = None
+
     # === 字符查詢 ===
 
     def get_data(self, char_or_code: str) -> Dict[str, Dict[str, str]]:
@@ -265,15 +269,35 @@ class HanziCore:
         - 主字無筆畫資料時，回退為全顯示（避免空白面板）
         - max_diff 不為 None 時，無筆畫資料的字一律排除
         """
-        chars_list = list(chars)
-
-        # 不篩選 → 直接回傳
-        if max_diff is None:
-            return chars_list
-
-        # 主字無資料 → 回退為全顯示
         base_strokes = self.get_stroke_count(base_char)
-        if base_strokes is None:
+        # 主字無資料且要篩選 → 回退全顯示（避免空白面板）
+        if max_diff is not None and base_strokes is None:
+            return list(chars)
+        return self.filter_by_stroke_value(chars, base_strokes, max_diff)
+
+    def filter_by_stroke_value(
+        self,
+        chars,
+        base_strokes: Optional[int],
+        max_diff: Optional[int],
+    ) -> List[str]:
+        """
+        依筆畫差距篩選字符列表（數值基準版）
+
+        多部件搜尋以「各部件筆畫加總」為基準時使用此版本。
+
+        參數:
+        chars: 待篩選的字符 iterable
+        base_strokes (Optional[int]): 比較基準筆畫數
+        max_diff (Optional[int]):
+            None 或 base_strokes 為 None → 不篩選，全部回傳
+            int → 只保留筆畫差 ≤ max_diff 的字（無筆畫資料的字一律排除）
+
+        回傳:
+        List[str]: 篩選後的字符列表，順序與輸入一致
+        """
+        chars_list = list(chars)
+        if max_diff is None or base_strokes is None:
             return chars_list
 
         result = []
@@ -379,6 +403,103 @@ class HanziCore:
             results = [c for c in results if c in charset]
 
         return results
+
+    def search_all(
+        self, queries: List[str], charset: Optional[Set[str]] = None
+    ) -> List[str]:
+        """
+        多部件 AND 搜尋：回傳「遞迴展開到葉部件後，計數涵蓋查詢多重集」的字
+
+        語意：
+        - 遞迴：部件藏在更深層也算（如 淋=⿰氵林，木在林裡 → 視為含木）
+        - 計數：重複部件代表「至少 N 個」（如 木木 = 至少兩個木，林/森入選）
+
+        參數:
+        queries (List[str]): 部件清單，保留重複（重複代表次數要求）
+        charset (Optional[Set[str]]): 可選的字符集篩選（None = 搜尋全部）
+
+        回傳:
+        List[str]: 命中字，按 Unicode 碼位升序（確定性，使「前 N 個」可預期）
+        """
+        if not queries:
+            return []
+
+        # 查詢部件正規化後建多重集（與葉索引正規化一致）
+        query_counter = Counter(_normalize_cjk_variant(q) for q in queries)
+
+        leaf_index = self._ensure_leaf_index()
+
+        # 候選 = 同時（遞迴）含所有查詢部件的字，用葉反向索引快速縮小交集
+        unique_parts = list(query_counter)
+        candidates = set(leaf_index.get(unique_parts[0], set()))
+        for part in unique_parts[1:]:
+            candidates &= leaf_index.get(part, set())
+            if not candidates:
+                return []
+
+        # 計數驗證：每個查詢部件的葉計數需 >= 要求次數
+        results = []
+        for char in candidates:
+            leaves = self._leaf_components(char)
+            if all(leaves.get(part, 0) >= n for part, n in query_counter.items()):
+                results.append(char)
+
+        if charset is not None:
+            results = [c for c in results if c in charset]
+
+        return sorted(results, key=ord)
+
+    def _ensure_leaf_index(self) -> Dict[str, Set[str]]:
+        """首次需要時建立葉部件反向索引（leaf → 含該葉部件的字集合），建立後快取。"""
+        if self._leaf_index is None:
+            index: Dict[str, Set[str]] = {}
+            for char in self.db:
+                for leaf in self._leaf_components(char):
+                    index.setdefault(leaf, set()).add(char)
+            self._leaf_index = index
+        return self._leaf_index
+
+    def _leaf_components(self, char: str, max_depth: int = 20) -> Counter:
+        """遞迴展開字到葉部件，回傳多重集計數（Counter）。
+
+        葉部件＝獨體字 / 不在資料庫 / IDS 即自身者；含循環防護與深度上限，
+        葉部件做 CJK 變體正規化（與反向索引一致）。
+        """
+        counter: Counter = Counter()
+        self._collect_leaves(char, 0, max_depth, frozenset(), counter)
+        return counter
+
+    def _collect_leaves(self, char, depth, max_depth, visiting, counter):
+        """_leaf_components 的遞迴內部實作。"""
+        data = self.db.get(char)
+        ids = data.get("ids_1") if data else None
+
+        # 葉節點：超過深度 / 無資料 / 無 IDS / IDS 即自身 / 獨體字（無 IDC）
+        if (
+            depth >= max_depth
+            or not ids
+            or ids == char
+            or all(idc not in ids for idc in IDC_CHARS)
+        ):
+            counter[_normalize_cjk_variant(char)] += 1
+            return
+
+        components = [
+            c
+            for c in self.parse_ids(ids)[0]
+            if c not in IDC_CHARS and not c.startswith("&")
+        ]
+        if not components:
+            counter[_normalize_cjk_variant(char)] += 1
+            return
+
+        for comp in components:
+            if comp == char or comp in visiting:
+                counter[_normalize_cjk_variant(comp)] += 1
+            else:
+                self._collect_leaves(
+                    comp, depth + 1, max_depth, visiting | {char}, counter
+                )
 
     def find_sister_characters(
         self, char: str, charset: Optional[Set[str]] = None, variant_index: int = 0
@@ -907,7 +1028,7 @@ def is_complete_search_input(text: str) -> bool:
     if not text:
         return False
 
-    # 漢字輸入（非 ASCII）- 接受單個或多個漢字，搜尋時會取第一個字
+    # 漢字輸入（非 ASCII）- 接受單個或多個漢字（多字觸發 AND 組合搜尋）
     if ord(text[0]) > 127:
         return True
 

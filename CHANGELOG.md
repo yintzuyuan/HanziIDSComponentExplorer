@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-27
+
+### Added
+
+- **多部件組合搜尋** — 搜尋欄輸入多個漢字部件（如「氵木」）即搜尋「同時包含所有部件」的字。採遞迴比對：部件藏在更深層也算（如「淋」=⿰氵林，木在林裡仍算含木）；重複部件代表「至少 N 個」（如「木木」找含兩個以上木的字）
+- **多部件模式呈現** — 中欄列出輸入部件（首行為原始輸入，可點選切換「交集」與「單部件衍生字」視角）、右欄列出交集結果、左欄初始空白待點選某字才填
+- **多部件自動鎖定** — 進入多部件模式時自動勾選並鎖定「衍生字」與「深度拆解」開關（多部件本質為遞迴衍生字邏輯），離開時恢復原設定
+- **多部件筆畫篩選** — 筆畫滑桿在多部件模式以「各輸入部件筆畫數加總」為基準篩選交集結果（如「氵木」= 3+4 = 7 畫）
+
+### Internal
+
+- 新增 `search_all`（遞迴展開至葉部件 + 多重集計數包含）、`filter_by_stroke_value`（數值基準筆畫篩選，`filter_by_strokes` 重用之），以及 lazy 葉部件反向索引（首次建立後快取）
+
 ## [1.0.3] - 2026-04-11
 
 ### Added

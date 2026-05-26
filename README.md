@@ -13,6 +13,7 @@
 ## 功能
 
 - **字符拆解** — 輸入漢字，視覺化顯示其部件樹狀結構
+- **多部件組合搜尋** — 輸入多個部件（如「氵木」）找出同時包含所有部件的字；採遞迴比對（部件藏在更深層也算，如「淋」含「木」），重複部件代表「至少 N 個」（如「木木」找含兩個以上木的字）
 - **同字根查詢** — 找出與本字結構相同的關聯字
 - **衍生字查詢** — 找出以本字為部件的衍生字
 - **字集篩選** — 預設顯示字型檔內的字，亦可使用自訂字集
@@ -38,6 +39,7 @@
 1. *視窗 > 漢字 IDS 部件查詢* 開啟視窗
 2. 在搜尋欄輸入漢字（如「森」）或 Unicode（如「68EE」）
 3. 查看拆解結果、同字根、衍生字
+4. 輸入多個部件（如「氵木」）搜尋同時包含所有部件的字：中欄列出輸入部件、右欄列出符合的字；此時筆畫篩選以各部件筆畫加總為基準（如「氵木」= 7 畫）
 
 ## 系統需求
 
@@ -80,6 +82,7 @@ A [Glyphs](https://glyphsapp.com/) font editor plugin for decomposing Chinese ch
 ## Features
 
 - **Character Decomposition** — Visualize the component tree structure of any Chinese character
+- **Multi-Component Search** — Enter multiple components (e.g. "氵木") to find characters containing all of them; uses recursive matching (a component nested deeper still counts, e.g. "淋" contains "木"), and repeated components mean "at least N" (e.g. "木木" finds characters with two or more 木)
 - **Sister Characters** — Find characters sharing the same structure
 - **Derived Characters** — Find characters using this character as a component
 - **Charset Filtering** — Filter by current font glyphs or custom charset
@@ -105,6 +108,7 @@ Download `HanziIDSComponentExplorer.glyphsPlugin` and double-click to install.
 1. Open *Window > HanziIDSComponentExplorer*
 2. Enter a Chinese character (e.g., "森") or Unicode (e.g., "68EE")
 3. View decomposition, sister characters, and derived characters
+4. Enter multiple components (e.g. "氵木") to find characters containing all of them: the middle column lists the input components, the right column lists the matches; stroke filtering then uses the sum of the components' stroke counts as the baseline (e.g. "氵木" = 7 strokes)
 
 ## Requirements
 
