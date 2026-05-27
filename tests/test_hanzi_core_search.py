@@ -127,3 +127,56 @@ class TestSearchAllGeneral:
         """結果按 Unicode 碼位升序"""
         result = core_components.search_all(["木", "木"])
         assert result == sorted(result, key=ord)
+
+
+@pytest.fixture
+def core_intermediate():
+    """中間部件交集測試核心。
+
+    中間部件＝本身可再拆、卻仍是常用查詢詞的部件（里、童、林）。
+    遞迴展開到「所有層級節點」後的計數（含中間節點與根字自身）：
+        里 → {里:1, 田:1, 土:1}                （⿱田土）
+        林 → {林:1, 木:2}                       （⿰木木）
+        童 → {童:1, 立:1, 里:1, 田:1, 土:1}      （⿱立里）
+        鐘 → {鐘:1, 金:1, 童:1, 立:1, 里:1, ...} （⿰金童，深層含立、里）
+        焚 → {焚:1, 林:1, 木:2, 火:1}            （⿱林火）
+    """
+    return _make_core(
+        {
+            "木": {"unicode": "6728", "ids_1": "木"},
+            "火": {"unicode": "706B", "ids_1": "火"},
+            "立": {"unicode": "7ACB", "ids_1": "立"},
+            "田": {"unicode": "7530", "ids_1": "田"},
+            "土": {"unicode": "571F", "ids_1": "土"},
+            "金": {"unicode": "91D1", "ids_1": "金"},
+            "里": {"unicode": "91CC", "ids_1": "⿱田土"},
+            "林": {"unicode": "6797", "ids_1": "⿰木木"},
+            "童": {"unicode": "7AE5", "ids_1": "⿱立里"},
+            "鐘": {"unicode": "9418", "ids_1": "⿰金童"},
+            "焚": {"unicode": "711A", "ids_1": "⿱林火"},
+        }
+    )
+
+
+class TestSearchAllIntermediateComponents:
+    """中間部件可比對：查詢詞本身可再拆時，仍應命中含它的字（修復回報的 bug）"""
+
+    def test_intermediate_component_li_matches_tong(self, core_intermediate):
+        """「立里」：里=⿱田土 是中間部件，童=⿱立里 應命中；鐘 深層亦含立、里"""
+        assert set(core_intermediate.search_all(["立", "里"])) == {"童", "鐘"}
+
+    def test_intermediate_component_tong_matches_zhong(self, core_intermediate):
+        """「金童」：童=⿱立里 是中間部件，鐘=⿰金童 應命中"""
+        assert core_intermediate.search_all(["金", "童"]) == ["鐘"]
+
+    def test_intermediate_component_lin_matches_fen(self, core_intermediate):
+        """「火林」：林=⿰木木 是中間部件，焚=⿱林火 應命中"""
+        assert core_intermediate.search_all(["火", "林"]) == ["焚"]
+
+    def test_leaf_path_still_matches_fen(self, core_intermediate):
+        """回歸：「火木木」走葉部件路徑仍命中焚（火≥1 且 木≥2）"""
+        assert core_intermediate.search_all(["火", "木", "木"]) == ["焚"]
+
+    def test_mixed_intermediate_and_leaf(self, core_intermediate):
+        """「木林」：木(葉)≥1 且 林(中間)≥1 → 林自身(木2,林1)與焚(木2,林1)命中"""
+        assert set(core_intermediate.search_all(["木", "林"])) == {"林", "焚"}

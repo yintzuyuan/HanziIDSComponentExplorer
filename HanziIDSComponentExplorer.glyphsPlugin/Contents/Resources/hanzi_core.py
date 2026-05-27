@@ -176,8 +176,8 @@ class HanziCore:
                     comp = _normalize_cjk_variant(comp)
                     self._component_index.setdefault(comp, set()).add(char)
 
-        # 葉部件反向索引（lazy 建立，見 _ensure_leaf_index）
-        self._leaf_index: Optional[Dict[str, Set[str]]] = None
+        # 全層級部件反向索引（lazy 建立，見 _ensure_recursive_index）
+        self._recursive_index: Optional[Dict[str, Set[str]]] = None
 
     # === 字符查詢 ===
 
@@ -408,10 +408,11 @@ class HanziCore:
         self, queries: List[str], charset: Optional[Set[str]] = None
     ) -> List[str]:
         """
-        多部件 AND 搜尋：回傳「遞迴展開到葉部件後，計數涵蓋查詢多重集」的字
+        多部件 AND 搜尋：回傳「遞迴展開到所有層級部件後，計數涵蓋查詢多重集」的字
 
         語意：
         - 遞迴：部件藏在更深層也算（如 淋=⿰氵林，木在林裡 → 視為含木）
+        - 全層級：中間部件本身也可當查詢詞（如 童=⿱立里 → 視為含里；焚=⿱林火 → 視為含林）
         - 計數：重複部件代表「至少 N 個」（如 木木 = 至少兩個木，林/森入選）
 
         參數:
@@ -424,24 +425,24 @@ class HanziCore:
         if not queries:
             return []
 
-        # 查詢部件正規化後建多重集（與葉索引正規化一致）
+        # 查詢部件正規化後建多重集（與全層級索引正規化一致）
         query_counter = Counter(_normalize_cjk_variant(q) for q in queries)
 
-        leaf_index = self._ensure_leaf_index()
+        recursive_index = self._ensure_recursive_index()
 
-        # 候選 = 同時（遞迴）含所有查詢部件的字，用葉反向索引快速縮小交集
+        # 候選 = 同時（遞迴）含所有查詢部件的字，用全層級反向索引快速縮小交集
         unique_parts = list(query_counter)
-        candidates = set(leaf_index.get(unique_parts[0], set()))
+        candidates = set(recursive_index.get(unique_parts[0], set()))
         for part in unique_parts[1:]:
-            candidates &= leaf_index.get(part, set())
+            candidates &= recursive_index.get(part, set())
             if not candidates:
                 return []
 
-        # 計數驗證：每個查詢部件的葉計數需 >= 要求次數
+        # 計數驗證：每個查詢部件的全層級計數需 >= 要求次數
         results = []
         for char in candidates:
-            leaves = self._leaf_components(char)
-            if all(leaves.get(part, 0) >= n for part, n in query_counter.items()):
+            components = self._recursive_components(char)
+            if all(components.get(part, 0) >= n for part, n in query_counter.items()):
                 results.append(char)
 
         if charset is not None:
@@ -449,28 +450,34 @@ class HanziCore:
 
         return sorted(results, key=ord)
 
-    def _ensure_leaf_index(self) -> Dict[str, Set[str]]:
-        """首次需要時建立葉部件反向索引（leaf → 含該葉部件的字集合），建立後快取。"""
-        if self._leaf_index is None:
+    def _ensure_recursive_index(self) -> Dict[str, Set[str]]:
+        """首次需要時建立全層級部件反向索引（部件 → 含該部件的字集合），建立後快取。
+
+        收錄拆解樹中「所有層級的節點」（中間部件與葉部件皆是 key），
+        故可比對如「里」「童」「林」這類本身可再拆的中間部件。
+        """
+        if self._recursive_index is None:
             index: Dict[str, Set[str]] = {}
             for char in self.db:
-                for leaf in self._leaf_components(char):
-                    index.setdefault(leaf, set()).add(char)
-            self._leaf_index = index
-        return self._leaf_index
+                for comp in self._recursive_components(char):
+                    index.setdefault(comp, set()).add(char)
+            self._recursive_index = index
+        return self._recursive_index
 
-    def _leaf_components(self, char: str, max_depth: int = 20) -> Counter:
-        """遞迴展開字到葉部件，回傳多重集計數（Counter）。
+    def _recursive_components(self, char: str, max_depth: int = 20) -> Counter:
+        """遞迴展開字到所有層級部件，回傳多重集計數（Counter）。
 
-        葉部件＝獨體字 / 不在資料庫 / IDS 即自身者；含循環防護與深度上限，
-        葉部件做 CJK 變體正規化（與反向索引一致）。
+        拆解樹中每個節點（含中間部件與葉部件、含根字自身）各計數一次；
+        含循環防護與深度上限，部件做 CJK 變體正規化（與反向索引一致）。
         """
         counter: Counter = Counter()
-        self._collect_leaves(char, 0, max_depth, frozenset(), counter)
+        self._collect_recursive(char, 0, max_depth, frozenset(), counter)
         return counter
 
-    def _collect_leaves(self, char, depth, max_depth, visiting, counter):
-        """_leaf_components 的遞迴內部實作。"""
+    def _collect_recursive(self, char, depth, max_depth, visiting, counter):
+        """_recursive_components 的遞迴內部實作：對每個節點計數，再展開其子部件。"""
+        counter[_normalize_cjk_variant(char)] += 1
+
         data = self.db.get(char)
         ids = data.get("ids_1") if data else None
 
@@ -481,7 +488,6 @@ class HanziCore:
             or ids == char
             or all(idc not in ids for idc in IDC_CHARS)
         ):
-            counter[_normalize_cjk_variant(char)] += 1
             return
 
         components = [
@@ -489,15 +495,12 @@ class HanziCore:
             for c in self.parse_ids(ids)[0]
             if c not in IDC_CHARS and not c.startswith("&")
         ]
-        if not components:
-            counter[_normalize_cjk_variant(char)] += 1
-            return
 
         for comp in components:
             if comp == char or comp in visiting:
                 counter[_normalize_cjk_variant(comp)] += 1
             else:
-                self._collect_leaves(
+                self._collect_recursive(
                     comp, depth + 1, max_depth, visiting | {char}, counter
                 )
 

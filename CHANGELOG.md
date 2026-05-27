@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-05-28
+
+### Fixed
+
+- **多部件搜尋可比對中間部件** — 修正多部件搜尋只比對「展開後的葉部件」，導致本身可再拆的中間部件無法當查詢詞的問題。現在「立里」找得到「童」（童=⿱立里）、「金童」找得到「鐘」（鐘=⿰金童）、「火林」找得到「焚」（焚=⿱林火）。原本「火木木」這類葉部件查詢不受影響
+
+### Internal
+
+- 將 `search_all` 使用的葉部件反向索引改為「全層級節點」反向索引：`_recursive_components`（拆解樹每個節點各計數一次，含中間部件與葉部件）、`_ensure_recursive_index`（取代 `_leaf_*` 系列）。對僅含原子部件的查詢，計數結果與舊葉索引完全相同（零回歸）
+
 ## [1.1.0] - 2026-05-27
 
 ### Added
@@ -75,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 字符數量：98,662 個
 - 多拆法字符：6,152 個（6.24%）
 
+[1.1.1]: https://github.com/yintzuyuan/HanziIDSComponentExplorer/releases/tag/v1.1.1
+[1.1.0]: https://github.com/yintzuyuan/HanziIDSComponentExplorer/releases/tag/v1.1.0
 [1.0.3]: https://github.com/yintzuyuan/HanziIDSComponentExplorer/releases/tag/v1.0.3
 [1.0.2]: https://github.com/yintzuyuan/HanziIDSComponentExplorer/releases/tag/v1.0.2
 [1.0.0]: https://github.com/yintzuyuan/HanziIDSComponentExplorer/releases/tag/v1.0.0

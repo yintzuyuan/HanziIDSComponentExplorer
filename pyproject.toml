@@ -1,6 +1,6 @@
 [project]
 name = "hanzi-ids-component-explorer"
-version = "1.1.0"
+version = "1.1.1"
 description = "Glyphs plugin for exploring Chinese character IDS components"
 readme = "README.md"
 license = {text = "Apache-2.0"}

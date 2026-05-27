@@ -13,7 +13,7 @@
 ## 功能
 
 - **字符拆解** — 輸入漢字，視覺化顯示其部件樹狀結構
-- **多部件組合搜尋** — 輸入多個部件（如「氵木」）找出同時包含所有部件的字；採遞迴比對（部件藏在更深層也算，如「淋」含「木」），重複部件代表「至少 N 個」（如「木木」找含兩個以上木的字）
+- **多部件組合搜尋** — 輸入多個部件（如「氵木」）找出同時包含所有部件的字；採遞迴比對（部件藏在更深層也算，如「淋」含「木」），可再拆的中間部件也能當查詢詞（如「立里」找到「童」、「火林」找到「焚」），重複部件代表「至少 N 個」（如「木木」找含兩個以上木的字）
 - **同字根查詢** — 找出與本字結構相同的關聯字
 - **衍生字查詢** — 找出以本字為部件的衍生字
 - **字集篩選** — 預設顯示字型檔內的字，亦可使用自訂字集
@@ -82,7 +82,7 @@ A [Glyphs](https://glyphsapp.com/) font editor plugin for decomposing Chinese ch
 ## Features
 
 - **Character Decomposition** — Visualize the component tree structure of any Chinese character
-- **Multi-Component Search** — Enter multiple components (e.g. "氵木") to find characters containing all of them; uses recursive matching (a component nested deeper still counts, e.g. "淋" contains "木"), and repeated components mean "at least N" (e.g. "木木" finds characters with two or more 木)
+- **Multi-Component Search** — Enter multiple components (e.g. "氵木") to find characters containing all of them; uses recursive matching (a component nested deeper still counts, e.g. "淋" contains "木"), decomposable intermediate components also work as queries (e.g. "立里" finds "童", "火林" finds "焚"), and repeated components mean "at least N" (e.g. "木木" finds characters with two or more 木)
 - **Sister Characters** — Find characters sharing the same structure
 - **Derived Characters** — Find characters using this character as a component
 - **Charset Filtering** — Filter by current font glyphs or custom charset
