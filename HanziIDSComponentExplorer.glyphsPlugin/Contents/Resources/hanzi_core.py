@@ -93,6 +93,21 @@ def _skip_one_operand(tokens: List[str], pos: int) -> int:
     return pos
 
 
+def resolve_display_char(
+    char: Optional[str], sticky: Optional[str], current: Optional[str]
+) -> Optional[str]:
+    """決定右欄顯示的字。
+
+    優先順序：明示參數 > sticky（上次右欄顯示、由 selection_callback 寫入）> current（本字）。
+
+    用於 stroke filter / color filter / refresh 等無 char 參數的 UI callback、保持
+    當下右欄視角（子部件視角 sticky、不跳回本字）。
+    """
+    if char is not None:
+        return char
+    return sticky or current
+
+
 def _split_top_operands(tokens: List[str]) -> List[List[str]]:
     """將 IDS tokens 按頂層 IDC 切出 operands sub-list。
 

@@ -151,6 +151,9 @@ class HanziComponentSearchTool:
         self.all_results = []  # 存儲 (tree, content) 格式的原始結果
         self.display_results = []  # 存儲顯示用的字符串
         self.current_char = None
+        # 右欄當前顯示的字（可能 != current_char、由 selection_callback 點子部件後寫入）；
+        # 讓 stroke / color filter 等無 char 參數的 callback 不跳回本字
+        self._right_panel_char = None
         self.deep_analysis = self.settings.get("deepAnalysis", False)
         self.show_derived = False
 
@@ -689,8 +692,9 @@ class HanziComponentSearchTool:
                 # 清空搜尋框
                 self.w.inputText.set("")
 
-                # 設定當前字符並觸發搜尋
+                # 設定當前字符並觸發搜尋（換主字 → reset 右欄子部件 sticky）
                 self.current_char = valid_char
+                self._right_panel_char = None
                 self.perform_search()
 
         except:
@@ -752,8 +756,9 @@ class HanziComponentSearchTool:
             else:
                 return  # 無輸入，保持原顯示
         else:
-            # 手動模式：使用搜尋框內容
+            # 手動模式：使用搜尋框內容（換主字 → reset 右欄子部件 sticky）
             self.current_char = None  # 清除自動模式的字符
+            self._right_panel_char = None
 
             # 多部件 AND 搜尋：輸入多個漢字時，進入多部件模式（中欄列部件、右欄列交集）
             # 原本只取第一字（Issue #31），改為 AND 組合；無條件觸發，不受衍生字開關限制
@@ -921,6 +926,7 @@ class HanziComponentSearchTool:
     def _clear_left_panel(self):
         """清空左欄（預覽 + 詳資）；多部件模式無單一焦點字時使用。"""
         self.current_char = None
+        self._right_panel_char = None
         self.w.preview.set("")
         self.w.content.set("")
         self.w.idsSwitcher.show(False)
@@ -1065,8 +1071,14 @@ class HanziComponentSearchTool:
             self.update_related_display(char)
 
     def update_char_info(self, char):
-        """更新字符資訊（支援 IDS 切換）"""
+        """更新字符資訊（支援 IDS 切換）。
+
+        被 selection_callback（多部件模式）呼叫時實際是「點子部件切視角」、
+        current_char 跟著走、右欄 sticky 隨之 reset（後續 update_related_display
+        會以新 current_char 為基準重新記住）。
+        """
         self.current_char = char
+        self._right_panel_char = None
         data = self.core.get_data(char)
 
         if data:
@@ -1407,12 +1419,19 @@ class HanziComponentSearchTool:
         更新相關字符顯示
 
         參數:
-        char: 可選，指定要顯示的字符。若為 None 則使用 self.current_char。
+        char: 可選，指定要顯示的字符。若為 None 則延用上次右欄顯示的字
+        （selection_callback 點子部件後 sticky）；再無則退回 self.current_char。
         """
-        # 若傳入 char 則使用，否則使用 self.current_char
-        display_char = char if char is not None else getattr(self, "current_char", None)
+        # 解析 display_char：明示 char > sticky（子部件視角 sticky）> current_char（本字）
+        display_char = resolve_display_char(
+            char,
+            getattr(self, "_right_panel_char", None),
+            getattr(self, "current_char", None),
+        )
         if display_char is None:
             return
+        # 記住右欄當前顯示的字（讓 stroke/color filter 等無 char 參數的 callback 保持視角）
+        self._right_panel_char = display_char
 
         charset = self.currentCharset if self.currentCharset else None
 
