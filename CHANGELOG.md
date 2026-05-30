@@ -9,24 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **右欄按 IDC 位置分組** — 衍生字與多部件交集的呈現從「字符流式拼接」改為按頂層 IDC 位置分行，標籤直接用 IDC 字元呈現（如 `⿰1 鐘鈴銀…`、`⿰≡ 鍂…`、`⿱≡· 鑫𨰻…`），不夾文字描述
-- **衍生字精細分組** — 按頂層 IDC + 位置數字（`⿰1`=左、`⿰2`=右、`⿲1/⿲2/⿲3`=左中右），多個位置都含查詢部件時用 `≡`（如鍂=⿰金金）
-- **嵌套位置標 `·`** — 查詢部件嵌在頂層 operand 的子結構/子字裡（而非該位置本身）時，位置後加中點 `·`（U+00B7）區別：羕=⿱𦍌永 歸 `⿱2`（永 直接是位置 2）、霡=⿱雨⿰月永 歸 `⿱2·`（永 嵌在子結構 ⿰月永 內）、𦻑=⿱艹詠 歸 `⿱2·`（永 嵌在子字 詠 內）；混合直接+嵌套的多位用 `≡·`（如鑫=⿱金鍂、𨰻=⿱⿰金金⿰金金）
-- **右欄重組為「子部件同位 → --- → 含本字組合」** — 搜複合字（如「明」=⿰日月）右欄上半列每個 immediate 子部件在原位的字（`⿰1 暉暗暝 …`=日同位、`⿰2 朋朗期 …`=月同位）；`---` 分隔（條件式：上下都有內容才插）；下半列含本字作為部件的字（按位置細分、如 `⿱2 萌`）。搜葉部件（如「金」）上半自動空、整段就是下半 v1.2.0 既有的位置細分行為
-- **上半也區分嵌套 `·`** — 上半 `⿰N` 行只含「子部件直接在 c 頂層位置 N」的字；`⿰N·` 行含「子部件嵌在 c 頂層位置 N 的子結構/子字內」的字。例如搜「明」、`⿰1 暉暗暝`（日直接在 ⿰1）、`⿰1· 鴠`（鴠=⿰旦鳥、旦含日嵌套）。direct 行排在 nested 行前
-- **多部件交集粗略分組** — 純按頂層 IDC 字元分組（`⿰ 鐘…`、`⿱ …`），不細分位置；多部件查詢時位置維度爆炸故簡化
-- **嵌套位置可推斷** — 查詢部件嵌在頂層子部件內仍歸到「該子部件所在的頂層位置」（搜「立」→ 鐘=⿰金童 歸 `⿰2`，因童含立）
+- **右欄重組為「子部件同位 → --- → 含本字組合」** — 取代既有同字根（sister）3 層渲染、改用 IDC + 位置標籤統一風格：
+  - **上半「子部件同位」**：對複合字 display_char 頂層 IDS 每個 Unicode operand 位置 N、列「`{IDC}{N}` <chars>」、chars 為該位置含同部件的字。例如搜「明」（=⿰日月）→ `⿰1 暉暗暝 …`（日同位）+ `⿰2 朋朗期 …`（月同位）
+  - **下半「含本字組合」**：列含 display_char 作為部件的字、按頂層 IDC 位置細分。例如搜「金」→ `⿰1 鐘鈴銀 …`、`⿰≡ 鍂`、`⿱≡· 鑫𨰻 …`
+  - **`---` 分隔**：條件式、只在上下都有實際內容才插
+  - **葉部件搜尋**（如「金」）上半自動空、整段就是下半的位置細分
+- **位置標籤完整語法**：
+  - `{IDC}{N}`（如 `⿰1`、`⿱2`、`⿲3`）：query 在 c 的頂層位置 N、直接是該 operand
+  - `{IDC}≡`：多個位置都直接含 query（對稱、如 鍂=⿰金金 對搜「金」歸 `⿰≡`）
+  - `{IDC}{N}·` / `{IDC}≡·`：嵌套標 `·`（U+00B7）。query 不直接是位置 N 的 operand、而是嵌在子結構或子字內。例如搜「明」、`⿰1· 鴠`（鴠=⿰旦鳥、日嵌在旦內）；搜「金」、`⿱≡· 鑫`（鑫=⿱金鍂、位置 1 直接金、位置 2 嵌套含金）
+  - 同位置 direct 排在 nested 前（`⿰1` 在 `⿰1·` 前）
+  - 對稱字（如 林=⿰木木）位置 1、2 各自獨立一行、不合併 `⿰≡`
+- **多部件交集粗略分組** — 搜 2+ 部件（如「金童」）右欄交集按頂層 IDC 字元分組（`⿰ 鐘 …`），不細分位置（多部件位置維度爆炸故簡化）
+- **嵌套位置可推斷** — 查詢部件嵌在頂層子部件內仍歸到「該子部件所在的頂層位置」。例如搜「立」→ 鐘=⿰金童 歸 `⿰2`（立 嵌在童裡、童在 ⿰2）
 
 ### Changed (breaking)
 
-- **移除同字根（sister）3 層分類渲染** — 既有「結構相同部件同位」「結構部件相同」「部件相同」整段從右欄消失。第一層的「同位」資訊由新「子部件同位」上半取代（風格改為 IDC + 位置 label）；後兩層的「結構同/部件同但不同位」字需透過中欄點該部件切視角取得（既有中欄點切換機制不受影響）
+- **移除同字根（sister）3 層分類渲染** — 既有「結構相同部件同位」「結構部件相同」「部件相同」整段從右欄消失。「結構相同部件同位」第一層的同位資訊由新「子部件同位」上半取代（label 改為 IDC + 位置）；後兩層「結構同/部件同但不同位」的字需透過中欄點該部件切視角取得（既有中欄機制不受影響、`find_sister_characters` core method 保留以備他用）
 
 ### Internal
 
-- 新增 `HanziCore.classify_by_position(char, query, granularity)` 與 `format_position_label(idc, pos)`、`group_by_position(chars, query, granularity)`、`compose_immediate_component_lines(derived_groups, display_char)`、`_top_position_contains(c, target_idc, target_position, query)`；複用既有 `_recursive_components()` 判斷頂層 operand 是否含查詢部件
+- 新增 `HanziCore` methods：`classify_by_position(char, query, granularity)`、`format_position_label(idc, pos, is_nested)`、`group_by_position(chars, query, granularity)`、`compose_immediate_component_lines(derived_groups, display_char)`、`_top_position_contains(c, target_idc, target_position, query)`、`_operand_directly_is(operand_tokens, query_set)`、`_operand_contains(operand_tokens, query_set)`；複用既有 `_recursive_components()` 判斷頂層 operand 是否含查詢部件
 - `update_related_display` 簡化為 upper/lower 兩段組裝；新增 UI helper `_apply_chars_filters` 封裝「排除已列字 + 顏色 + 筆畫」三道篩選
-- `find_sister_characters` core method 仍保留（未來可能還有別用）但 UI 不再呼叫
-- 模組常數新增：`IDC_ARITY`（每個 IDC 的 operand 個數）、`IDC_ORDER`（分組標籤展示順序）、`MULTI_POSITION_MARKER`（`≡`，U+2261）、`NESTED_POSITION_MARKER`（`·`，U+00B7）、`UNCLASSIFIED_LABEL`（`∅`，獨體字 fallback）
+- 模組常數新增：`IDC_ARITY`（每個 IDC 的 operand 個數、含 〾 = 1）、`IDC_ORDER`（分組展示順序）、`MULTI_POSITION_MARKER`（`≡`，U+2261）、`NESTED_POSITION_MARKER`（`·`，U+00B7）、`UNCLASSIFIED_LABEL`（`∅`，獨體字 fallback）
+- IDS 解析輔助：module-level `_split_top_operands(tokens)`、`_skip_one_operand(tokens, pos)`
 
 ## [1.1.1] - 2026-05-28
 
