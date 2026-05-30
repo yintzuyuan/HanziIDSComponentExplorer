@@ -14,7 +14,7 @@ import gzip
 import pickle
 import unicodedata
 from collections import Counter
-from typing import Dict, List, Tuple, Union, Optional, Set
+from typing import Dict, Iterable, List, Tuple, Union, Optional, Set
 from pathlib import Path
 
 
@@ -25,6 +25,33 @@ ERROR_SEARCH_FAILED = "搜尋失敗"
 
 # IDS 分隔字符 (Ideographic Description Characters)
 IDC_CHARS = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾"
+
+# 每個 IDC 帶的 operand 個數（IDS 標準）：
+# 二元：⿰⿱⿴⿵⿶⿷⿸⿹⿺⿻；三元：⿲⿳；一元：〾（變體）
+IDC_ARITY = {
+    "⿰": 2,
+    "⿱": 2,
+    "⿲": 3,
+    "⿳": 3,
+    "⿴": 2,
+    "⿵": 2,
+    "⿶": 2,
+    "⿷": 2,
+    "⿸": 2,
+    "⿹": 2,
+    "⿺": 2,
+    "⿻": 2,
+    "〾": 1,
+}
+
+# 位置分組標籤的展示順序（IDC 主序、同 IDC 內位置升序、None=≡ 在最後）
+IDC_ORDER = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾∅"
+
+# 多位（同 IDC 多個頂層 operand 都含查詢部件）標籤符號（U+2261 IDENTICAL TO）
+MULTI_POSITION_MARKER = "≡"
+
+# 無法分類（獨體字、IDS 為 CDP 實體、無頂層 IDC）的 fallback 標籤
+UNCLASSIFIED_LABEL = "∅"
 
 # 應做 NFKC 正規化的 Unicode 區塊（CJK 相關變體）
 # 康熙部首 (2F00-2FD5): ⽊→木
@@ -43,6 +70,46 @@ def _normalize_cjk_variant(char: str) -> str:
         if len(normalized) == 1:
             return normalized
     return char
+
+
+def _skip_one_operand(tokens: List[str], pos: int) -> int:
+    """跳過 tokens 從 pos 起的一個完整 operand（含遞迴子結構），回傳新 pos。
+
+    operand 可能是葉 token（單字或 CDP 實體），也可能是子結構（IDC + 其 arity 個 sub-operands）。
+    若 IDC 為非標準 / pos 越界，視為葉、消耗一個 token。
+    """
+    if pos >= len(tokens):
+        return pos
+    token = tokens[pos]
+    arity = IDC_ARITY.get(token)
+    if arity is None:
+        return pos + 1
+    pos += 1
+    for _ in range(arity):
+        pos = _skip_one_operand(tokens, pos)
+    return pos
+
+
+def _split_top_operands(tokens: List[str]) -> List[List[str]]:
+    """將 IDS tokens 按頂層 IDC 切出 operands sub-list。
+
+    例：⿰金童 → [["金"], ["童"]]；⿱⿰金金⿰金金 → [["⿰","金","金"], ["⿰","金","金"]]。
+    若 tokens[0] 非 IDC、或 tokens 太短不夠 arity，回傳已切出的部分（保守）。
+    """
+    if not tokens:
+        return []
+    arity = IDC_ARITY.get(tokens[0])
+    if arity is None:
+        return []
+    operands: List[List[str]] = []
+    pos = 1
+    for _ in range(arity):
+        if pos >= len(tokens):
+            break
+        start = pos
+        pos = _skip_one_operand(tokens, pos)
+        operands.append(tokens[start:pos])
+    return operands
 
 
 class HanziCore:
@@ -503,6 +570,120 @@ class HanziCore:
                 self._collect_recursive(
                     comp, depth + 1, max_depth, visiting | {char}, counter
                 )
+
+    # === 位置分組（IDC + 位置）===
+
+    def _operand_contains(self, operand_tokens: List[str], query_set: Set[str]) -> bool:
+        """判斷一個頂層 operand（單字或 IDS 子結構）展開後是否含 query_set 任一部件。
+
+        - 葉 token：是 IDC → 跳過（其本身是子結構引導符）；是 CDP 實體（以 & 開頭）→
+          無法展開、視為不含（保守處理）；是單字 → 用 _recursive_components 看是否含 query
+        - 子結構：對其內所有非 IDC、非 CDP 的單字 token 各自展開
+        - query_set 已預先做 CJK 變體正規化
+        """
+        for tok in operand_tokens:
+            if tok in IDC_CHARS:
+                continue
+            if tok.startswith("&"):
+                continue
+            counter = self._recursive_components(tok)
+            if any(comp in counter for comp in query_set):
+                return True
+        return False
+
+    def classify_by_position(
+        self,
+        char: str,
+        query_components: List[str],
+        granularity: str = "fine",
+    ) -> Tuple[str, Optional[int]]:
+        """回傳 char 按頂層 IDC + 查詢部件位置的分組標籤組件。
+
+        granularity:
+            "fine" → 精細：(idc, 1) / (idc, 2) / ... 表示查詢部件唯一出現的位置；
+                     (idc, None) 表示多個頂層位置都含（呼叫端渲染為 ⿰≡）。
+            "coarse" → 粗略：只回 (idc, None)，不解析位置。
+
+        無法分類時（獨體字、IDS 為 CDP 實體、無頂層 IDC、所有位置皆不含）回 (∅, None)。
+        """
+        data = self.db.get(char)
+        ids = data.get("ids_1") if data else None
+        if not ids or ids == char:
+            return (UNCLASSIFIED_LABEL, None)
+
+        tokens = self.parse_ids(ids)[0]
+        if not tokens or tokens[0] not in IDC_ARITY:
+            return (UNCLASSIFIED_LABEL, None)
+
+        top_idc = tokens[0]
+        if granularity == "coarse":
+            return (top_idc, None)
+
+        operands = _split_top_operands(tokens)
+        if not operands:
+            return (top_idc, None)
+
+        query_set = {_normalize_cjk_variant(q) for q in query_components if q}
+        if not query_set:
+            return (UNCLASSIFIED_LABEL, None)
+
+        matched_positions = [
+            i + 1
+            for i, op in enumerate(operands)
+            if self._operand_contains(op, query_set)
+        ]
+
+        if not matched_positions:
+            return (UNCLASSIFIED_LABEL, None)
+        if len(matched_positions) == 1:
+            return (top_idc, matched_positions[0])
+        return (top_idc, None)
+
+    def format_position_label(self, idc: str, position: Optional[int]) -> str:
+        """渲染分組標籤的字面格式。
+
+        (⿰, 1) → "⿰1"；(⿰, None) → "⿰≡"；("〾", None) → "〾"；("∅", None) → "∅"。
+        """
+        if position is not None:
+            return f"{idc}{position}"
+        if idc in ("〾", UNCLASSIFIED_LABEL):
+            return idc
+        return f"{idc}{MULTI_POSITION_MARKER}"
+
+    def group_by_position(
+        self,
+        chars: Iterable[str],
+        query_components: List[str],
+        granularity: str = "fine",
+    ) -> List[Tuple[str, List[str]]]:
+        """將 chars 按頂層 IDC 位置分組，回傳 (label, sorted_chars) 排序好的 list。
+
+        - 每組內字依 Unicode 升序；空組不出現
+        - 組順序：IDC_ORDER 主序、同 IDC 內位置升序（1→2→3→None=≡）
+        - granularity="fine"：label 形如 "⿰1"、"⿰≡"、"〾"、"∅"
+        - granularity="coarse"：label 只用 IDC 字元（"⿰"、"⿱"、"〾"、"∅"）
+        """
+        buckets: Dict[Tuple[str, Optional[int]], List[str]] = {}
+        for c in chars:
+            key = self.classify_by_position(c, query_components, granularity)
+            buckets.setdefault(key, []).append(c)
+
+        def sort_key(key: Tuple[str, Optional[int]]):
+            idc, pos = key
+            idx = IDC_ORDER.find(idc)
+            if idx < 0:
+                idx = len(IDC_ORDER)
+            return (idx, float("inf") if pos is None else pos)
+
+        result: List[Tuple[str, List[str]]] = []
+        for key in sorted(buckets, key=sort_key):
+            idc, pos = key
+            sorted_chars = sorted(buckets[key], key=ord)
+            label = (
+                idc if granularity == "coarse" else self.format_position_label(idc, pos)
+            )
+            result.append((label, sorted_chars))
+        return result
 
     def find_sister_characters(
         self, char: str, charset: Optional[Set[str]] = None, variant_index: int = 0

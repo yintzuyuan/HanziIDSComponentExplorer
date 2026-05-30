@@ -904,7 +904,14 @@ class HanziComponentSearchTool:
                 base = sum(s for s in part_strokes if s is not None)
                 related = self.core.filter_by_stroke_value(related, base, max_diff)
 
-        display_text = self.core.clean_display_text("".join(related))
+        # 按頂層 IDC 粗略分組：⿰ 鐘…、⿱ …（多部件交集只看結構類型、不分位置）
+        groups = self.core.group_by_position(related, parts, "coarse")
+        if groups:
+            lines = [f"{label} {''.join(chars)}" for label, chars in groups]
+            display_text = self.core.clean_display_text("\n".join(lines))
+        else:
+            display_text = ""
+
         attr_string = self.create_attributed_string(
             display_text, RELATED_CHARS_FONT_SIZE, use_enhanced_spacing=True
         )
@@ -1459,7 +1466,13 @@ class HanziComponentSearchTool:
                         )
 
                     if filtered_chars:
-                        display_lines.append(f"{component} {''.join(filtered_chars)}")
+                        # 按頂層 IDC 位置分組：金⿰1 鐘鈴銀…、金⿰≡ 鍂…、金⿱≡ 鑫𨰻…
+                        for label, group_chars in self.core.group_by_position(
+                            filtered_chars, [component], "fine"
+                        ):
+                            display_lines.append(
+                                f"{component}{label} {''.join(group_chars)}"
+                            )
 
         display_text = "\n".join(display_lines) if display_lines else display_char
         # 清理可能造成顯示問題的字符
