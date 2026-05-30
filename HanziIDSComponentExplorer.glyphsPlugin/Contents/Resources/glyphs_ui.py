@@ -1466,13 +1466,17 @@ class HanziComponentSearchTool:
                         )
 
                     if filtered_chars:
-                        # 按頂層 IDC 位置分組：金⿰1 鐘鈴銀…、金⿰≡ 鍂…、金⿱≡ 鑫𨰻…
-                        for label, group_chars in self.core.group_by_position(
-                            filtered_chars, [component], "fine"
-                        ):
-                            display_lines.append(
-                                f"{component}{label} {''.join(group_chars)}"
+                        # 按頂層 IDC 位置分組。component == display_char（搜葉部件）時
+                        # 省略本字前綴（避免「金⿰1 鐘鈴銀…」的「金」雜訊）；
+                        # 多葉部件搜尋（如搜「明」→ 日/月）時保留前綴區分。
+                        display_lines.extend(
+                            self.core.compose_position_grouped_lines(
+                                filtered_chars,
+                                component=component,
+                                display_char=display_char,
+                                granularity="fine",
                             )
+                        )
 
         display_text = "\n".join(display_lines) if display_lines else display_char
         # 清理可能造成顯示問題的字符

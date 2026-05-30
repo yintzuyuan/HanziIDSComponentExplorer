@@ -715,6 +715,29 @@ class HanziCore:
             result.append((label, sorted_chars))
         return result
 
+    def compose_position_grouped_lines(
+        self,
+        chars: Iterable[str],
+        component: str,
+        display_char: str,
+        granularity: str = "fine",
+    ) -> List[str]:
+        """組裝衍生字位置分組的顯示行 list（每行格式：「{prefix}{label} {chars}」）。
+
+        前綴規則：
+        - component == display_char：搜葉部件本身（如搜「金」→ component=金=display_char），
+          省略前綴避免「金⿰1 鐘鈴…」中重複本字的雜訊
+        - component != display_char：搜複合字（如搜「明」=⿰日月，衍生字按 component 日/月 分組），
+          保留 component 前綴以區分不同來源
+        """
+        prefix = "" if component == display_char else component
+        return [
+            f"{prefix}{label} {''.join(group_chars)}"
+            for label, group_chars in self.group_by_position(
+                chars, [component], granularity
+            )
+        ]
+
     def find_sister_characters(
         self, char: str, charset: Optional[Set[str]] = None, variant_index: int = 0
     ) -> Dict[str, Dict[str, List[str]]]:

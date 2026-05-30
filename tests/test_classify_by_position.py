@@ -375,6 +375,51 @@ class TestGroupByPositionFine:
         assert core_position.group_by_position([], ["金"], "fine") == []
 
 
+class TestComposePositionGroupedLines:
+    """compose_position_grouped_lines：組裝衍生字顯示文字行。
+
+    前綴規則：
+    - component == display_char（搜葉部件如「金」、找含金的字）→ 省略前綴，行首直接 IDC 標籤
+    - component != display_char（搜複合字如「明」→ 衍生字按日/月 component 分組）→ 保留前綴區分
+    """
+
+    def test_omit_prefix_when_component_is_search_char(self, core_position):
+        """搜「金」：component=金、display_char=金，標籤不加本字雜訊。"""
+        lines = core_position.compose_position_grouped_lines(
+            ["鐘", "淦", "鍂"], component="金", display_char="金"
+        )
+        assert lines == [
+            "⿰1 鐘",
+            "⿰2 淦",
+            "⿰≡ 鍂",
+        ]
+
+    def test_keep_prefix_when_component_differs(self, core_position):
+        """搜「明」假想場景：component=金、display_char=明，金 ≠ 明 → 保留前綴。"""
+        lines = core_position.compose_position_grouped_lines(
+            ["鐘"], component="金", display_char="明"
+        )
+        assert lines == ["金⿰1 鐘"]
+
+    def test_empty_input_returns_empty(self, core_position):
+        assert (
+            core_position.compose_position_grouped_lines(
+                [], component="金", display_char="金"
+            )
+            == []
+        )
+
+    def test_nested_marker_in_line(self, core_position):
+        """嵌套位置 · 標籤正確進入輸出行。"""
+        lines = core_position.compose_position_grouped_lines(
+            ["羕", "霡", "𦻑"], component="永", display_char="永"
+        )
+        assert lines == [
+            "⿱2 羕",
+            "⿱2· 霡𦻑",
+        ]
+
+
 class TestGroupByPositionCoarse:
     """group_by_position（coarse）：標籤只用 IDC 字元、不加位置/≡。"""
 
