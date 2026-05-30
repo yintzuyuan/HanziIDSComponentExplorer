@@ -142,6 +142,16 @@ def core_position():
             # 鐘 嵌套測試
             "鎚": {"unicode": "939A", "ids_1": "⿰金追"},
             "鋩": {"unicode": "92E9", "ids_1": "⿰金芒"},
+            # 嵌套 case（上半 ⿰1·/⿰2· 區分測試、CHISE 真實 IDS）
+            "鳥": {"unicode": "9CE5", "ids_1": "鳥"},
+            "鴠": {
+                "unicode": "9D20",
+                "ids_1": "⿰旦鳥",
+            },  # 位置 1=旦(含日嵌套) → 對搜明 ⿰1·
+            "㙟": {
+                "unicode": "365F",
+                "ids_1": "⿰土朗",
+            },  # 位置 2=朗(含月嵌套) → 對搜明 ⿰2·
         }
     )
 
@@ -426,8 +436,8 @@ class TestComposeImmediateComponentLines:
     - 對稱字（如 林=⿰木木）位置 1、2 各自獨立一行
     """
 
-    def test_compound_search_明(self, core_position):
-        """搜「明」=⿰日月：⿰1（日同位）+ ⿰2（月同位）；非同位字（⿱結構）排除。"""
+    def test_compound_search_明_direct_only(self, core_position):
+        """搜「明」=⿰日月、derived 都是直接同位：只出現 ⿰1/⿰2 兩行（無 ·）。"""
         derived = {
             "明": ["萌"],
             "日": ["暗", "暉", "暝", "昂", "昃", "旦", "旨", "昏"],
@@ -439,6 +449,35 @@ class TestComposeImmediateComponentLines:
         assert out == [
             ("⿰1", ["暉", "暗", "暝"]),
             ("⿰2", ["朋", "朗", "期"]),
+        ]
+
+    def test_compound_search_明_with_nested(self, core_position):
+        """搜「明」、derived 含嵌套字：⿰1/⿰1·（直接/嵌套）、⿰2/⿰2· 拆兩組。
+
+        鴠=⿰旦鳥、旦=⿱日一 → 日 嵌在 ⿰1 的子字（旦）內 → ⿰1·
+        㙟=⿰土朗、朗=⿰良月 → 月 嵌在 ⿰2 的子字（朗）內 → ⿰2·
+        同位置 direct 行排在 nested 行前（⿰1 在 ⿰1· 前）。
+        """
+        derived = {
+            "明": ["萌"],
+            "日": ["暗", "暉", "暝", "鴠"],  # 鴠 嵌套
+            "月": ["朋", "朗", "期", "㙟"],  # 㙟 嵌套
+        }
+        out = core_position.compose_immediate_component_lines(derived, "明")
+        assert out == [
+            ("⿰1", ["暉", "暗", "暝"]),
+            ("⿰1·", ["鴠"]),
+            ("⿰2", ["朋", "朗", "期"]),
+            ("⿰2·", ["㙟"]),
+        ]
+
+    def test_compound_search_明_only_nested(self, core_position):
+        """某位置只有嵌套字、無直接：只出現 ⿰N·、不出現空的 ⿰N。"""
+        derived = {"明": [], "日": ["鴠"], "月": ["㙟"]}
+        out = core_position.compose_immediate_component_lines(derived, "明")
+        assert out == [
+            ("⿰1·", ["鴠"]),
+            ("⿰2·", ["㙟"]),
         ]
 
     def test_leaf_search_金_returns_empty(self, core_position):

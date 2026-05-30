@@ -742,9 +742,10 @@ class HanziCore:
         """組裝右欄上半「子部件同位」的 [(label, sorted_chars), …]。
 
         對 display_char 頂層 IDS 的每個 operand 位置 N：
-        - 若 operand 是單一 Unicode 字 X（非 IDC、非 CDP、非子結構）：列入
-          label = format_position_label(top_idc, N, False)（如 "⿰1"）
-          chars = derived_groups[X] 中 _top_position_contains(c, top_idc, N, X) 為 True 的字
+        - 若 operand 是單一 Unicode 字 X（非 IDC、非 CDP、非子結構）：拆 direct / nested 兩組
+          - direct（X 是 c 頂層位置 N 的 operand 本身）→ label = "⿰N"
+          - nested（X 嵌在 c 頂層位置 N 的子結構/子字內）→ label = "⿰N·"
+          兩組各自非空才出現；同位置 direct 行排在 nested 行前
         - 若 operand 是 IDS 子結構或 CDP 實體：跳過該位置（不列）
         - chars 按 Unicode 升序、空組不出現
         - 對稱字（如 林=⿰木木）位置 1、2 各自獨立一行、不合併 ⿰≡
@@ -769,14 +770,34 @@ class HanziCore:
             chars = derived_groups.get(component, [])
             if not chars:
                 continue
-            kept = [
-                c
-                for c in chars
-                if self._top_position_contains(c, top_idc, position, component)
-            ]
-            if kept:
-                label = self.format_position_label(top_idc, position, False)
-                out.append((label, sorted(kept, key=ord)))
+
+            qset = {component}
+            direct: List[str] = []
+            nested: List[str] = []
+            for c in chars:
+                if not self._top_position_contains(c, top_idc, position, component):
+                    continue
+                c_tokens = self.parse_ids(self.db[c]["ids_1"])[0]
+                c_op = _split_top_operands(c_tokens)[position - 1]
+                if self._operand_directly_is(c_op, qset):
+                    direct.append(c)
+                else:
+                    nested.append(c)
+
+            if direct:
+                out.append(
+                    (
+                        self.format_position_label(top_idc, position, False),
+                        sorted(direct, key=ord),
+                    )
+                )
+            if nested:
+                out.append(
+                    (
+                        self.format_position_label(top_idc, position, True),
+                        sorted(nested, key=ord),
+                    )
+                )
         return out
 
     def find_sister_characters(
