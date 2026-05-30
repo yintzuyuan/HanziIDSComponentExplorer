@@ -35,7 +35,7 @@ from AppKit import (
 )
 import CoreText
 
-from hanzi_core import HanziCore, is_complete_search_input
+from hanzi_core import HanziCore, is_complete_search_input, resolve_display_char
 from glyphs_adapter import GlyphsAdapter, GlyphsSettings
 from localization import L
 
