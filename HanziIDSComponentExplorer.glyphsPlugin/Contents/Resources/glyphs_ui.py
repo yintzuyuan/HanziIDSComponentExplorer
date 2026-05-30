@@ -35,7 +35,7 @@ from AppKit import (
 )
 import CoreText
 
-from hanzi_core import HanziCore, is_complete_search_input
+from hanzi_core import HanziCore, is_complete_search_input, resolve_display_char
 from glyphs_adapter import GlyphsAdapter, GlyphsSettings
 from localization import L
 
@@ -151,6 +151,9 @@ class HanziComponentSearchTool:
         self.all_results = []  # 存儲 (tree, content) 格式的原始結果
         self.display_results = []  # 存儲顯示用的字符串
         self.current_char = None
+        # 右欄當前顯示的字（可能 != current_char、由 selection_callback 點子部件後寫入）；
+        # 讓 stroke / color filter 等無 char 參數的 callback 不跳回本字
+        self._right_panel_char = None
         self.deep_analysis = self.settings.get("deepAnalysis", False)
         self.show_derived = False
 
@@ -689,8 +692,9 @@ class HanziComponentSearchTool:
                 # 清空搜尋框
                 self.w.inputText.set("")
 
-                # 設定當前字符並觸發搜尋
+                # 設定當前字符並觸發搜尋（換主字 → reset 右欄子部件 sticky）
                 self.current_char = valid_char
+                self._right_panel_char = None
                 self.perform_search()
 
         except:
@@ -752,8 +756,9 @@ class HanziComponentSearchTool:
             else:
                 return  # 無輸入，保持原顯示
         else:
-            # 手動模式：使用搜尋框內容
+            # 手動模式：使用搜尋框內容（換主字 → reset 右欄子部件 sticky）
             self.current_char = None  # 清除自動模式的字符
+            self._right_panel_char = None
 
             # 多部件 AND 搜尋：輸入多個漢字時，進入多部件模式（中欄列部件、右欄列交集）
             # 原本只取第一字（Issue #31），改為 AND 組合；無條件觸發，不受衍生字開關限制
@@ -904,7 +909,14 @@ class HanziComponentSearchTool:
                 base = sum(s for s in part_strokes if s is not None)
                 related = self.core.filter_by_stroke_value(related, base, max_diff)
 
-        display_text = self.core.clean_display_text("".join(related))
+        # 按頂層 IDC 粗略分組：⿰ 鐘…、⿱ …（多部件交集只看結構類型、不分位置）
+        groups = self.core.group_by_position(related, parts, "coarse")
+        if groups:
+            lines = [f"{label} {''.join(chars)}" for label, chars in groups]
+            display_text = self.core.clean_display_text("\n".join(lines))
+        else:
+            display_text = ""
+
         attr_string = self.create_attributed_string(
             display_text, RELATED_CHARS_FONT_SIZE, use_enhanced_spacing=True
         )
@@ -914,6 +926,7 @@ class HanziComponentSearchTool:
     def _clear_left_panel(self):
         """清空左欄（預覽 + 詳資）；多部件模式無單一焦點字時使用。"""
         self.current_char = None
+        self._right_panel_char = None
         self.w.preview.set("")
         self.w.content.set("")
         self.w.idsSwitcher.show(False)
@@ -1058,8 +1071,14 @@ class HanziComponentSearchTool:
             self.update_related_display(char)
 
     def update_char_info(self, char):
-        """更新字符資訊（支援 IDS 切換）"""
+        """更新字符資訊（支援 IDS 切換）。
+
+        被 selection_callback（多部件模式）呼叫時實際是「點子部件切視角」、
+        current_char 跟著走、右欄 sticky 隨之 reset（後續 update_related_display
+        會以新 current_char 為基準重新記住）。
+        """
         self.current_char = char
+        self._right_panel_char = None
         data = self.core.get_data(char)
 
         if data:
@@ -1383,83 +1402,79 @@ class HanziComponentSearchTool:
         else:
             self.update_related_display()
 
+    def _apply_chars_filters(self, chars, display_char, related_chars, stroke_max_diff):
+        """套用 related_chars 排除 + 顏色 + 筆畫 三道篩選、回篩後 list（保持原順序）。"""
+        filtered = [c for c in chars if c not in related_chars]
+        if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
+            font = self.adapter.get_current_font()
+            filtered = self.adapter.filter_by_color(filtered, font, self.filter_colors)
+        if stroke_max_diff is not None:
+            filtered = self.core.filter_by_strokes(
+                filtered, display_char, stroke_max_diff
+            )
+        return filtered
+
     def update_related_display(self, char=None):
         """
         更新相關字符顯示
 
         參數:
-        char: 可選，指定要顯示的字符。若為 None 則使用 self.current_char。
+        char: 可選，指定要顯示的字符。若為 None 則延用上次右欄顯示的字
+        （selection_callback 點子部件後 sticky）；再無則退回 self.current_char。
         """
-        # 若傳入 char 則使用，否則使用 self.current_char
-        display_char = char if char is not None else getattr(self, "current_char", None)
+        # 解析 display_char：明示 char > sticky（子部件視角 sticky）> current_char（本字）
+        display_char = resolve_display_char(
+            char,
+            getattr(self, "_right_panel_char", None),
+            getattr(self, "current_char", None),
+        )
         if display_char is None:
             return
+        # 記住右欄當前顯示的字（讓 stroke/color filter 等無 char 參數的 callback 保持視角）
+        self._right_panel_char = display_char
 
-        display_lines = []
         charset = self.currentCharset if self.currentCharset else None
-
-        # 取得關聯字結果（透過 core），使用當前選中的 IDS 拆法
-        variant_index = getattr(self, "current_ids_index", 0)
-        sisters = self.core.find_sister_characters(display_char, charset, variant_index)
-        related_chars = set()
-
-        # 檢查是否為獨體字
-        is_independent_char = "獨體字" in sisters
-        if is_independent_char:
-            display_lines.append(display_char)
 
         # 預先計算筆畫篩選參數（避免每次迴圈重複）
         stroke_max_diff = self._stroke_filter_max_diff()
 
-        # 顯示同字根（獨體字跳過此部分）
-        if not is_independent_char:
-            for positions, chars in sisters.get("結構相同部件同位", {}).items():
-                # 套用顏色篩選（透過 adapter）
-                filtered_chars = chars
-                if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
-                    font = self.adapter.get_current_font()
-                    filtered_chars = self.adapter.filter_by_color(
-                        filtered_chars, font, self.filter_colors
-                    )
+        # v1.2.0+ 右欄結構：上半「子部件同位」、`---`、下半「含本字作為部件的字」
+        # sister 既有 3 層與舊衍生字 component prefix 渲染已移除（plan idc-shimmering-sutherland）
+        upper_lines = []
+        lower_lines = []
+        related_chars = set()
 
-                # 套用筆畫篩選（OFF 時 stroke_max_diff 為 None → 跳過）
-                if stroke_max_diff is not None:
-                    filtered_chars = self.core.filter_by_strokes(
-                        filtered_chars, display_char, stroke_max_diff
-                    )
-
-                if filtered_chars:
-                    display_lines.append(f"{positions} {''.join(filtered_chars)}")
-                    related_chars.update(filtered_chars)
-
-        # 檢查是否啟用衍生字顯示
+        derived_groups = {}
         if self.show_derived:
             derived_groups = self.core.find_derived_characters(display_char, charset)
-            if derived_groups:
-                # 先加入分隔線
-                if display_lines:
-                    display_lines.append("-" * 3)
 
-                # 過濾並加入衍生字結果
-                for component, chars in derived_groups.items():
-                    # 過濾掉已在關聯字中的字符
-                    filtered_chars = [c for c in chars if c not in related_chars]
+        # 上半：子部件同位（display_char 頂層每個 Unicode operand 一行、filter 該位置同位的字）
+        for label, chars in self.core.compose_immediate_component_lines(
+            derived_groups, display_char
+        ):
+            filtered = self._apply_chars_filters(
+                chars, display_char, related_chars, stroke_max_diff
+            )
+            if filtered:
+                upper_lines.append(f"{label} {''.join(filtered)}")
+                related_chars.update(filtered)
 
-                    # 套用顏色篩選（透過 adapter）
-                    if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
-                        font = self.adapter.get_current_font()
-                        filtered_chars = self.adapter.filter_by_color(
-                            filtered_chars, font, self.filter_colors
-                        )
+        # 下半：含本字作為部件的字（derived_groups[display_char]、按位置細分）
+        self_chars = derived_groups.get(display_char, [])
+        self_chars = self._apply_chars_filters(
+            self_chars, display_char, related_chars, stroke_max_diff
+        )
+        if self_chars:
+            for label, chars in self.core.group_by_position(
+                self_chars, [display_char], "fine"
+            ):
+                lower_lines.append(f"{label} {''.join(chars)}")
 
-                    # 套用筆畫篩選
-                    if stroke_max_diff is not None:
-                        filtered_chars = self.core.filter_by_strokes(
-                            filtered_chars, display_char, stroke_max_diff
-                        )
-
-                    if filtered_chars:
-                        display_lines.append(f"{component} {''.join(filtered_chars)}")
+        # 組裝（`---` 只在上下都有實際內容才插）
+        display_lines = list(upper_lines)
+        if upper_lines and lower_lines:
+            display_lines.append("-" * 3)
+        display_lines.extend(lower_lines)
 
         display_text = "\n".join(display_lines) if display_lines else display_char
         # 清理可能造成顯示問題的字符

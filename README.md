@@ -14,8 +14,9 @@
 
 - **字符拆解** — 輸入漢字，視覺化顯示其部件樹狀結構
 - **多部件組合搜尋** — 輸入多個部件（如「氵木」）找出同時包含所有部件的字；採遞迴比對（部件藏在更深層也算，如「淋」含「木」），可再拆的中間部件也能當查詢詞（如「立里」找到「童」、「火林」找到「焚」），重複部件代表「至少 N 個」（如「木木」找含兩個以上木的字）
-- **同字根查詢** — 找出與本字結構相同的關聯字
-- **衍生字查詢** — 找出以本字為部件的衍生字
+- **子部件同位查詢** — 對複合字（如「明」=⿰日月）右欄上半列每個子部件在原位的字：`⿰1 暉暗暝 …`（日在 ⿰1 同位）、`⿰2 朋朗期 …`（月在 ⿰2 同位）；嵌套則加 `·`（如 `⿰1· 鴠` 因鴠=⿰旦鳥、日嵌在旦內）
+- **含本字組合查詢** — 右欄下半列含本字作為部件的字、按頂層 IDC + 位置細分（如搜「金」→ `⿰1 鐘鈴銀 …`、`⿰≡ 鍂`、`⿱≡· 鑫𨰻`）；對稱位用 `≡`、嵌套加 `·`
+- **多部件交集** — 搜兩個以上部件時、右欄交集按頂層 IDC 粗略分組（如搜「金童」→ `⿰ 鐘 …`）
 - **字集篩選** — 預設顯示字型檔內的字，亦可使用自訂字集
 - **顏色篩選** — 依 Glyphs 顏色標籤過濾結果
 - **筆畫數篩選** — 用底部滑桿選擇 ±0/±1/±2/±3/±5 筆畫差，快速從相關字中找到筆畫接近主字的造字參考（資料源自 CNS11643）
@@ -83,8 +84,9 @@ A [Glyphs](https://glyphsapp.com/) font editor plugin for decomposing Chinese ch
 
 - **Character Decomposition** — Visualize the component tree structure of any Chinese character
 - **Multi-Component Search** — Enter multiple components (e.g. "氵木") to find characters containing all of them; uses recursive matching (a component nested deeper still counts, e.g. "淋" contains "木"), decomposable intermediate components also work as queries (e.g. "立里" finds "童", "火林" finds "焚"), and repeated components mean "at least N" (e.g. "木木" finds characters with two or more 木)
-- **Sister Characters** — Find characters sharing the same structure
-- **Derived Characters** — Find characters using this character as a component
+- **Sub-component Co-position Lookup** — For compound characters (e.g., 明=⿰日月), the upper right panel lists characters with each sub-component in the same position: `⿰1 暉暗暝 …` (日 at ⿰1), `⿰2 朋朗期 …` (月 at ⿰2); nesting adds `·` (e.g., `⿰1· 鴠` because 鴠=⿰旦鳥 has 日 nested inside 旦)
+- **Containing-self Lookup** — The lower right panel lists characters that use the search character as a component, grouped by top-level IDC + position (e.g., search 金 → `⿰1 鐘鈴銀 …`, `⿰≡ 鍂`, `⿱≡· 鑫𨰻`); symmetric positions use `≡`, nesting adds `·`
+- **Multi-Component Intersection** — Searching 2+ components groups intersection by top-level IDC (coarse): e.g., 金童 → `⿰ 鐘 …`
 - **Charset Filtering** — Filter by current font glyphs or custom charset
 - **Color Filtering** — Filter by Glyphs color labels
 - **Stroke Count Filtering** — Discrete bottom slider (±0/±1/±2/±3/±5) to narrow related characters by stroke count difference from the current character (data from CNS11643)
