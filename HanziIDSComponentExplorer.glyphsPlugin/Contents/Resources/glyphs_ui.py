@@ -1390,6 +1390,18 @@ class HanziComponentSearchTool:
         else:
             self.update_related_display()
 
+    def _apply_chars_filters(self, chars, display_char, related_chars, stroke_max_diff):
+        """套用 related_chars 排除 + 顏色 + 筆畫 三道篩選、回篩後 list（保持原順序）。"""
+        filtered = [c for c in chars if c not in related_chars]
+        if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
+            font = self.adapter.get_current_font()
+            filtered = self.adapter.filter_by_color(filtered, font, self.filter_colors)
+        if stroke_max_diff is not None:
+            filtered = self.core.filter_by_strokes(
+                filtered, display_char, stroke_max_diff
+            )
+        return filtered
+
     def update_related_display(self, char=None):
         """
         更新相關字符顯示
@@ -1402,81 +1414,48 @@ class HanziComponentSearchTool:
         if display_char is None:
             return
 
-        display_lines = []
         charset = self.currentCharset if self.currentCharset else None
-
-        # 取得關聯字結果（透過 core），使用當前選中的 IDS 拆法
-        variant_index = getattr(self, "current_ids_index", 0)
-        sisters = self.core.find_sister_characters(display_char, charset, variant_index)
-        related_chars = set()
-
-        # 檢查是否為獨體字
-        is_independent_char = "獨體字" in sisters
-        if is_independent_char:
-            display_lines.append(display_char)
 
         # 預先計算筆畫篩選參數（避免每次迴圈重複）
         stroke_max_diff = self._stroke_filter_max_diff()
 
-        # 顯示同字根（獨體字跳過此部分）
-        if not is_independent_char:
-            for positions, chars in sisters.get("結構相同部件同位", {}).items():
-                # 套用顏色篩選（透過 adapter）
-                filtered_chars = chars
-                if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
-                    font = self.adapter.get_current_font()
-                    filtered_chars = self.adapter.filter_by_color(
-                        filtered_chars, font, self.filter_colors
-                    )
+        # v1.2.0+ 右欄結構：上半「子部件同位」、`---`、下半「含本字作為部件的字」
+        # sister 既有 3 層與舊衍生字 component prefix 渲染已移除（plan idc-shimmering-sutherland）
+        upper_lines = []
+        lower_lines = []
+        related_chars = set()
 
-                # 套用筆畫篩選（OFF 時 stroke_max_diff 為 None → 跳過）
-                if stroke_max_diff is not None:
-                    filtered_chars = self.core.filter_by_strokes(
-                        filtered_chars, display_char, stroke_max_diff
-                    )
-
-                if filtered_chars:
-                    display_lines.append(f"{positions} {''.join(filtered_chars)}")
-                    related_chars.update(filtered_chars)
-
-        # 檢查是否啟用衍生字顯示
+        derived_groups = {}
         if self.show_derived:
             derived_groups = self.core.find_derived_characters(display_char, charset)
-            if derived_groups:
-                # 先加入分隔線
-                if display_lines:
-                    display_lines.append("-" * 3)
 
-                # 過濾並加入衍生字結果
-                for component, chars in derived_groups.items():
-                    # 過濾掉已在關聯字中的字符
-                    filtered_chars = [c for c in chars if c not in related_chars]
+        # 上半：子部件同位（display_char 頂層每個 Unicode operand 一行、filter 該位置同位的字）
+        for label, chars in self.core.compose_immediate_component_lines(
+            derived_groups, display_char
+        ):
+            filtered = self._apply_chars_filters(
+                chars, display_char, related_chars, stroke_max_diff
+            )
+            if filtered:
+                upper_lines.append(f"{label} {''.join(filtered)}")
+                related_chars.update(filtered)
 
-                    # 套用顏色篩選（透過 adapter）
-                    if hasattr(self, "filter_colors") and len(self.filter_colors) > 0:
-                        font = self.adapter.get_current_font()
-                        filtered_chars = self.adapter.filter_by_color(
-                            filtered_chars, font, self.filter_colors
-                        )
+        # 下半：含本字作為部件的字（derived_groups[display_char]、按位置細分）
+        self_chars = derived_groups.get(display_char, [])
+        self_chars = self._apply_chars_filters(
+            self_chars, display_char, related_chars, stroke_max_diff
+        )
+        if self_chars:
+            for label, chars in self.core.group_by_position(
+                self_chars, [display_char], "fine"
+            ):
+                lower_lines.append(f"{label} {''.join(chars)}")
 
-                    # 套用筆畫篩選
-                    if stroke_max_diff is not None:
-                        filtered_chars = self.core.filter_by_strokes(
-                            filtered_chars, display_char, stroke_max_diff
-                        )
-
-                    if filtered_chars:
-                        # 按頂層 IDC 位置分組。component == display_char（搜葉部件）時
-                        # 省略本字前綴（避免「金⿰1 鐘鈴銀…」的「金」雜訊）；
-                        # 多葉部件搜尋（如搜「明」→ 日/月）時保留前綴區分。
-                        display_lines.extend(
-                            self.core.compose_position_grouped_lines(
-                                filtered_chars,
-                                component=component,
-                                display_char=display_char,
-                                granularity="fine",
-                            )
-                        )
+        # 組裝（`---` 只在上下都有實際內容才插）
+        display_lines = list(upper_lines)
+        if upper_lines and lower_lines:
+            display_lines.append("-" * 3)
+        display_lines.extend(lower_lines)
 
         display_text = "\n".join(display_lines) if display_lines else display_char
         # 清理可能造成顯示問題的字符

@@ -715,28 +715,69 @@ class HanziCore:
             result.append((label, sorted_chars))
         return result
 
-    def compose_position_grouped_lines(
-        self,
-        chars: Iterable[str],
-        component: str,
-        display_char: str,
-        granularity: str = "fine",
-    ) -> List[str]:
-        """組裝衍生字位置分組的顯示行 list（每行格式：「{prefix}{label} {chars}」）。
+    def _top_position_contains(
+        self, c: str, target_idc: str, target_position: int, query: str
+    ) -> bool:
+        """判斷 c 的頂層 IDC == target_idc、且 1-based target_position 的 operand 含 query
+        （直接或嵌套都算；複用 _operand_contains 遞迴判定）。"""
+        data = self.db.get(c)
+        ids = data.get("ids_1") if data else None
+        if not ids or ids == c:
+            return False
+        tokens = self.parse_ids(ids)[0]
+        if not tokens or tokens[0] != target_idc:
+            return False
+        operands = _split_top_operands(tokens)
+        if target_position - 1 >= len(operands):
+            return False
+        return self._operand_contains(
+            operands[target_position - 1], {_normalize_cjk_variant(query)}
+        )
 
-        前綴規則：
-        - component == display_char：搜葉部件本身（如搜「金」→ component=金=display_char），
-          省略前綴避免「金⿰1 鐘鈴…」中重複本字的雜訊
-        - component != display_char：搜複合字（如搜「明」=⿰日月，衍生字按 component 日/月 分組），
-          保留 component 前綴以區分不同來源
+    def compose_immediate_component_lines(
+        self,
+        derived_groups: Dict[str, List[str]],
+        display_char: str,
+    ) -> List[Tuple[str, List[str]]]:
+        """組裝右欄上半「子部件同位」的 [(label, sorted_chars), …]。
+
+        對 display_char 頂層 IDS 的每個 operand 位置 N：
+        - 若 operand 是單一 Unicode 字 X（非 IDC、非 CDP、非子結構）：列入
+          label = format_position_label(top_idc, N, False)（如 "⿰1"）
+          chars = derived_groups[X] 中 _top_position_contains(c, top_idc, N, X) 為 True 的字
+        - 若 operand 是 IDS 子結構或 CDP 實體：跳過該位置（不列）
+        - chars 按 Unicode 升序、空組不出現
+        - 對稱字（如 林=⿰木木）位置 1、2 各自獨立一行、不合併 ⿰≡
+        - display_char 是獨體字 / IDS 即自身 / 頂層非 IDC：回空 list
         """
-        prefix = "" if component == display_char else component
-        return [
-            f"{prefix}{label} {''.join(group_chars)}"
-            for label, group_chars in self.group_by_position(
-                chars, [component], granularity
-            )
-        ]
+        data = self.db.get(display_char)
+        ids = data.get("ids_1") if data else None
+        if not ids or ids == display_char:
+            return []
+        tokens = self.parse_ids(ids)[0]
+        if not tokens or tokens[0] not in IDC_ARITY:
+            return []
+        top_idc = tokens[0]
+        operands = _split_top_operands(tokens)
+
+        out: List[Tuple[str, List[str]]] = []
+        for i, op in enumerate(operands):
+            if len(op) != 1 or op[0] in IDC_CHARS or op[0].startswith("&"):
+                continue
+            component = _normalize_cjk_variant(op[0])
+            position = i + 1
+            chars = derived_groups.get(component, [])
+            if not chars:
+                continue
+            kept = [
+                c
+                for c in chars
+                if self._top_position_contains(c, top_idc, position, component)
+            ]
+            if kept:
+                label = self.format_position_label(top_idc, position, False)
+                out.append((label, sorted(kept, key=ord)))
+        return out
 
     def find_sister_characters(
         self, char: str, charset: Optional[Set[str]] = None, variant_index: int = 0

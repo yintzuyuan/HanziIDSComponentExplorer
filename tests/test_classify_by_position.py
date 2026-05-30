@@ -102,6 +102,46 @@ def core_position():
             "羕": {"unicode": "7F95", "ids_1": "⿱𦍌永"},
             "霡": {"unicode": "9721", "ids_1": "⿱雨⿰月永"},
             "𦻑": {"unicode": "26ED1", "ids_1": "⿱艹詠"},
+            # 明 系列（用於 compose_immediate_component_lines 測試）
+            "日": {"unicode": "65E5", "ids_1": "日"},
+            "音": {"unicode": "97F3", "ids_1": "音"},
+            "軍": {"unicode": "8ECD", "ids_1": "軍"},
+            "冥": {"unicode": "51A5", "ids_1": "冥"},
+            "卬": {"unicode": "536C", "ids_1": "卬"},
+            "仄": {"unicode": "4EC4", "ids_1": "仄"},
+            "一": {"unicode": "4E00", "ids_1": "一"},
+            "匕": {"unicode": "5315", "ids_1": "匕"},
+            "氏": {"unicode": "6C0F", "ids_1": "氏"},
+            "良": {"unicode": "826F", "ids_1": "良"},
+            "其": {"unicode": "5176", "ids_1": "其"},
+            "公": {"unicode": "516C", "ids_1": "公"},
+            "邦": {"unicode": "90A6", "ids_1": "邦"},
+            "追": {"unicode": "8FFD", "ids_1": "追"},
+            "芒": {"unicode": "8292", "ids_1": "芒"},
+            "明": {"unicode": "660E", "ids_1": "⿰日月"},
+            "暗": {"unicode": "6697", "ids_1": "⿰日音"},
+            "暉": {"unicode": "6689", "ids_1": "⿰日軍"},
+            "暝": {"unicode": "669D", "ids_1": "⿰日冥"},
+            "昂": {"unicode": "6602", "ids_1": "⿱日卬"},  # ⿱ 結構、filter 排除
+            "昃": {"unicode": "6603", "ids_1": "⿱日仄"},  # ⿱、排除
+            "旦": {"unicode": "65E6", "ids_1": "⿱日一"},  # ⿱、排除
+            "旨": {"unicode": "65E8", "ids_1": "⿱匕日"},  # ⿱、排除
+            "昏": {"unicode": "660F", "ids_1": "⿱氏日"},  # ⿱、排除
+            "朋": {
+                "unicode": "670B",
+                "ids_1": "⿰月月",
+            },  # 月在 ⿰1 和 ⿰2、含 ⿰2 → 保留
+            "朗": {"unicode": "6717", "ids_1": "⿰良月"},
+            "期": {"unicode": "671F", "ids_1": "⿰其月"},
+            "朣": {"unicode": "6723", "ids_1": "⿰月童"},  # 月在 ⿰1、filter ⿰2 排除
+            "萌": {"unicode": "840C", "ids_1": "⿱艹明"},
+            # 林 對稱字測試（⿰木木）
+            "松": {"unicode": "677E", "ids_1": "⿰木公"},  # 木在 ⿰1
+            "梆": {"unicode": "6886", "ids_1": "⿰木邦"},  # 木在 ⿰1
+            "沐": {"unicode": "6C90", "ids_1": "⿰氵木"},  # 木在 ⿰2
+            # 鐘 嵌套測試
+            "鎚": {"unicode": "939A", "ids_1": "⿰金追"},
+            "鋩": {"unicode": "92E9", "ids_1": "⿰金芒"},
         }
     )
 
@@ -375,49 +415,77 @@ class TestGroupByPositionFine:
         assert core_position.group_by_position([], ["金"], "fine") == []
 
 
-class TestComposePositionGroupedLines:
-    """compose_position_grouped_lines：組裝衍生字顯示文字行。
+class TestComposeImmediateComponentLines:
+    """compose_immediate_component_lines：右欄上半「子部件同位」行組裝。
 
-    前綴規則：
-    - component == display_char（搜葉部件如「金」、找含金的字）→ 省略前綴，行首直接 IDC 標籤
-    - component != display_char（搜複合字如「明」→ 衍生字按日/月 component 分組）→ 保留前綴區分
+    對 display_char 頂層 IDS 的每個 operand 位置 N：
+    - 若 operand 是單一 Unicode 字 X：列「{format_position_label(IDC, N)} <chars>」
+      chars = derived_groups[X] 中、「c 的頂層 IDC == 同 IDC 且位置 N 含 X」的字
+    - 若 operand 是 IDS 子結構或 CDP：跳過該位置
+    - chars 排序 Unicode 升序、空組不出現
+    - 對稱字（如 林=⿰木木）位置 1、2 各自獨立一行
     """
 
-    def test_omit_prefix_when_component_is_search_char(self, core_position):
-        """搜「金」：component=金、display_char=金，標籤不加本字雜訊。"""
-        lines = core_position.compose_position_grouped_lines(
-            ["鐘", "淦", "鍂"], component="金", display_char="金"
-        )
-        assert lines == [
-            "⿰1 鐘",
-            "⿰2 淦",
-            "⿰≡ 鍂",
+    def test_compound_search_明(self, core_position):
+        """搜「明」=⿰日月：⿰1（日同位）+ ⿰2（月同位）；非同位字（⿱結構）排除。"""
+        derived = {
+            "明": ["萌"],
+            "日": ["暗", "暉", "暝", "昂", "昃", "旦", "旨", "昏"],
+            "月": ["朋", "朗", "期", "朣"],
+        }
+        out = core_position.compose_immediate_component_lines(derived, "明")
+        # 升序 by ord: 暉(6689) < 暗(6697) < 暝(669D)
+        # 朋(670B) < 朗(6717) < 期(671F)；朣(6723)=⿰月童、月在 ⿰1 → 排除
+        assert out == [
+            ("⿰1", ["暉", "暗", "暝"]),
+            ("⿰2", ["朋", "朗", "期"]),
         ]
 
-    def test_keep_prefix_when_component_differs(self, core_position):
-        """搜「明」假想場景：component=金、display_char=明，金 ≠ 明 → 保留前綴。"""
-        lines = core_position.compose_position_grouped_lines(
-            ["鐘"], component="金", display_char="明"
-        )
-        assert lines == ["金⿰1 鐘"]
+    def test_leaf_search_金_returns_empty(self, core_position):
+        """搜「金」（葉部件、IDS 即自身）：上半無內容。"""
+        derived = {"金": ["鐘", "淦", "鍂"]}
+        assert core_position.compose_immediate_component_lines(derived, "金") == []
 
-    def test_empty_input_returns_empty(self, core_position):
+    def test_compound_search_鐘_skips_nested(self, core_position):
+        """搜「鐘」=⿰金童：只列 金（⿰1）、童（⿰2）；立/里/田/土 嵌套不列。"""
+        derived = {
+            "鐘": [],
+            "金": ["鎚", "鋩"],
+            "童": ["朣"],
+            "立": ["拉", "颯"],  # 嵌套、不該出現
+            "里": ["野"],
+        }
+        out = core_position.compose_immediate_component_lines(derived, "鐘")
+        # 鋩(92E9) < 鎚(939A) 按 Unicode 升序
+        assert out == [
+            ("⿰1", ["鋩", "鎚"]),
+            ("⿰2", ["朣"]),
+        ]
+
+    def test_symmetric_search_林_splits_positions(self, core_position):
+        """搜「林」=⿰木木：⿰1 和 ⿰2 各自獨立一行、不合併 ⿰≡。"""
+        derived = {"林": ["森"], "木": ["松", "梆", "沐"]}
+        out = core_position.compose_immediate_component_lines(derived, "林")
+        # 松(677E) < 梆(6886)、木 在 ⿰1 → ⿰1 行
+        # 沐(6C90)、木 在 ⿰2 → ⿰2 行
+        assert out == [
+            ("⿰1", ["松", "梆"]),
+            ("⿰2", ["沐"]),
+        ]
+
+    def test_substructure_only_𨰻(self, core_position):
+        """搜「𨰻」=⿱⿰金金⿰金金：兩位皆子結構非字、上半空。"""
+        derived = {"𨰻": []}
+        assert core_position.compose_immediate_component_lines(derived, "𨰻") == []
+
+    def test_empty_input(self, core_position):
+        assert core_position.compose_immediate_component_lines({}, "明") == []
+
+    def test_independent_char(self, core_position):
+        """獨體字（如「金」）：IDS 即自身、上半空。"""
         assert (
-            core_position.compose_position_grouped_lines(
-                [], component="金", display_char="金"
-            )
-            == []
+            core_position.compose_immediate_component_lines({"金": ["鐘"]}, "金") == []
         )
-
-    def test_nested_marker_in_line(self, core_position):
-        """嵌套位置 · 標籤正確進入輸出行。"""
-        lines = core_position.compose_position_grouped_lines(
-            ["羕", "霡", "𦻑"], component="永", display_char="永"
-        )
-        assert lines == [
-            "⿱2 羕",
-            "⿱2· 霡𦻑",
-        ]
 
 
 class TestGroupByPositionCoarse:

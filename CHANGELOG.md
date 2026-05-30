@@ -12,14 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **右欄按 IDC 位置分組** — 衍生字與多部件交集的呈現從「字符流式拼接」改為按頂層 IDC 位置分行，標籤直接用 IDC 字元呈現（如 `⿰1 鐘鈴銀…`、`⿰≡ 鍂…`、`⿱≡· 鑫𨰻…`），不夾文字描述
 - **衍生字精細分組** — 按頂層 IDC + 位置數字（`⿰1`=左、`⿰2`=右、`⿲1/⿲2/⿲3`=左中右），多個位置都含查詢部件時用 `≡`（如鍂=⿰金金）
 - **嵌套位置標 `·`** — 查詢部件嵌在頂層 operand 的子結構/子字裡（而非該位置本身）時，位置後加中點 `·`（U+00B7）區別：羕=⿱𦍌永 歸 `⿱2`（永 直接是位置 2）、霡=⿱雨⿰月永 歸 `⿱2·`（永 嵌在子結構 ⿰月永 內）、𦻑=⿱艹詠 歸 `⿱2·`（永 嵌在子字 詠 內）；混合直接+嵌套的多位用 `≡·`（如鑫=⿱金鍂、𨰻=⿱⿰金金⿰金金）
-- **單葉部件搜尋省略本字前綴** — 搜「金」時行首不再重複「金」字（從 `金⿰1 鐘…` 改為 `⿰1 鐘…`）；搜複合字（如「明」→ 衍生字按日/月 component 分組）時保留前綴區分
+- **右欄重組為「子部件同位 → --- → 含本字組合」** — 搜複合字（如「明」=⿰日月）右欄上半列每個 immediate 子部件在原位的字（`⿰1 暉暗暝 …`=日同位、`⿰2 朋朗期 …`=月同位）；`---` 分隔（條件式：上下都有內容才插）；下半列含本字作為部件的字（按位置細分、如 `⿱2 萌`）。搜葉部件（如「金」）上半自動空、整段就是下半 v1.2.0 既有的位置細分行為
 - **多部件交集粗略分組** — 純按頂層 IDC 字元分組（`⿰ 鐘…`、`⿱ …`），不細分位置；多部件查詢時位置維度爆炸故簡化
 - **嵌套位置可推斷** — 查詢部件嵌在頂層子部件內仍歸到「該子部件所在的頂層位置」（搜「立」→ 鐘=⿰金童 歸 `⿰2`，因童含立）
 
+### Changed (breaking)
+
+- **移除同字根（sister）3 層分類渲染** — 既有「結構相同部件同位」「結構部件相同」「部件相同」整段從右欄消失。第一層的「同位」資訊由新「子部件同位」上半取代（風格改為 IDC + 位置 label）；後兩層的「結構同/部件同但不同位」字需透過中欄點該部件切視角取得（既有中欄點切換機制不受影響）
+
 ### Internal
 
-- 新增 `HanziCore.classify_by_position(char, query, granularity)` 與 `format_position_label(idc, pos)`、`group_by_position(chars, query, granularity)`；複用既有 `_recursive_components()` 判斷頂層 operand 是否含查詢部件
-- 同字根區既有 3 層分類（結構同+部件同位 > 結構同 > 部件同）保持不變
+- 新增 `HanziCore.classify_by_position(char, query, granularity)` 與 `format_position_label(idc, pos)`、`group_by_position(chars, query, granularity)`、`compose_immediate_component_lines(derived_groups, display_char)`、`_top_position_contains(c, target_idc, target_position, query)`；複用既有 `_recursive_components()` 判斷頂層 operand 是否含查詢部件
+- `update_related_display` 簡化為 upper/lower 兩段組裝；新增 UI helper `_apply_chars_filters` 封裝「排除已列字 + 顏色 + 筆畫」三道篩選
+- `find_sister_characters` core method 仍保留（未來可能還有別用）但 UI 不再呼叫
 - 模組常數新增：`IDC_ARITY`（每個 IDC 的 operand 個數）、`IDC_ORDER`（分組標籤展示順序）、`MULTI_POSITION_MARKER`（`≡`，U+2261）、`NESTED_POSITION_MARKER`（`·`，U+00B7）、`UNCLASSIFIED_LABEL`（`∅`，獨體字 fallback）
 
 ## [1.1.1] - 2026-05-28
