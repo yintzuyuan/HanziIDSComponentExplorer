@@ -50,6 +50,9 @@ IDC_ORDER = "⿰⿱⿲⿳⿴⿵⿶⿷⿸⿹⿺⿻〾∅"
 # 多位（同 IDC 多個頂層 operand 都含查詢部件）標籤符號（U+2261 IDENTICAL TO）
 MULTI_POSITION_MARKER = "≡"
 
+# 嵌套位置標記（查詢部件嵌在頂層 operand 的子結構/子字內、而非該 operand 本身）（U+00B7 MIDDLE DOT）
+NESTED_POSITION_MARKER = "·"
+
 # 無法分類（獨體字、IDS 為 CDP 實體、無頂層 IDC）的 fallback 標籤
 UNCLASSIFIED_LABEL = "∅"
 
@@ -573,6 +576,17 @@ class HanziCore:
 
     # === 位置分組（IDC + 位置）===
 
+    def _operand_directly_is(
+        self, operand_tokens: List[str], query_set: Set[str]
+    ) -> bool:
+        """判斷一個頂層 operand 是否「直接是」query_set 中某部件本身（單一 token、無嵌套）。"""
+        if len(operand_tokens) != 1:
+            return False
+        tok = operand_tokens[0]
+        if tok in IDC_CHARS or tok.startswith("&"):
+            return False
+        return _normalize_cjk_variant(tok) in query_set
+
     def _operand_contains(self, operand_tokens: List[str], query_set: Set[str]) -> bool:
         """判斷一個頂層 operand（單字或 IDS 子結構）展開後是否含 query_set 任一部件。
 
@@ -596,59 +610,73 @@ class HanziCore:
         char: str,
         query_components: List[str],
         granularity: str = "fine",
-    ) -> Tuple[str, Optional[int]]:
+    ) -> Tuple[str, Optional[int], bool]:
         """回傳 char 按頂層 IDC + 查詢部件位置的分組標籤組件。
 
-        granularity:
-            "fine" → 精細：(idc, 1) / (idc, 2) / ... 表示查詢部件唯一出現的位置；
-                     (idc, None) 表示多個頂層位置都含（呼叫端渲染為 ⿰≡）。
-            "coarse" → 粗略：只回 (idc, None)，不解析位置。
+        回傳 (idc, position, is_nested)：
+            - position：1/2/3 為單一 match 位置；None 為多位（⿰≡）；對 ∅ 與 〾 一律 None
+            - is_nested：False=查詢部件直接是該 operand 本身；True=隱在子結構/子字裡
+            - 多位（None）：is_nested = any(該 match 位置是嵌套)
+            - coarse / ∅ / 〾 一律 is_nested=False（不影響其標籤）
 
-        無法分類時（獨體字、IDS 為 CDP 實體、無頂層 IDC、所有位置皆不含）回 (∅, None)。
+        granularity:
+            "fine" → 精細：(idc, n, False/True) 或 (idc, None, False/True)
+            "coarse" → 粗略：(idc, None, False)，不解析位置與嵌套
         """
         data = self.db.get(char)
         ids = data.get("ids_1") if data else None
         if not ids or ids == char:
-            return (UNCLASSIFIED_LABEL, None)
+            return (UNCLASSIFIED_LABEL, None, False)
 
         tokens = self.parse_ids(ids)[0]
         if not tokens or tokens[0] not in IDC_ARITY:
-            return (UNCLASSIFIED_LABEL, None)
+            return (UNCLASSIFIED_LABEL, None, False)
 
         top_idc = tokens[0]
         if granularity == "coarse":
-            return (top_idc, None)
+            return (top_idc, None, False)
 
         operands = _split_top_operands(tokens)
         if not operands:
-            return (top_idc, None)
+            return (top_idc, None, False)
 
         query_set = {_normalize_cjk_variant(q) for q in query_components if q}
         if not query_set:
-            return (UNCLASSIFIED_LABEL, None)
+            return (UNCLASSIFIED_LABEL, None, False)
 
-        matched_positions = [
-            i + 1
-            for i, op in enumerate(operands)
-            if self._operand_contains(op, query_set)
-        ]
+        # 蒐集 (position, is_direct) 對所有含 query 的頂層位置
+        matches: List[Tuple[int, bool]] = []
+        for i, op in enumerate(operands):
+            if not self._operand_contains(op, query_set):
+                continue
+            is_direct = self._operand_directly_is(op, query_set)
+            matches.append((i + 1, is_direct))
 
-        if not matched_positions:
-            return (UNCLASSIFIED_LABEL, None)
-        if len(matched_positions) == 1:
-            return (top_idc, matched_positions[0])
-        return (top_idc, None)
+        if not matches:
+            return (UNCLASSIFIED_LABEL, None, False)
 
-    def format_position_label(self, idc: str, position: Optional[int]) -> str:
+        any_nested = any(not is_direct for _, is_direct in matches)
+
+        if len(matches) == 1:
+            pos, is_direct = matches[0]
+            return (top_idc, pos, not is_direct)
+        return (top_idc, None, any_nested)
+
+    def format_position_label(
+        self, idc: str, position: Optional[int], is_nested: bool = False
+    ) -> str:
         """渲染分組標籤的字面格式。
 
-        (⿰, 1) → "⿰1"；(⿰, None) → "⿰≡"；("〾", None) → "〾"；("∅", None) → "∅"。
+        (⿰, 1, False) → "⿰1"      (⿰, 1, True)  → "⿰1·"
+        (⿰, None, False) → "⿰≡"   (⿰, None, True) → "⿰≡·"
+        ("〾", None, *) → "〾"     ("∅", None, *) → "∅"  (〾、∅ 無 · 變體)
         """
-        if position is not None:
-            return f"{idc}{position}"
         if idc in ("〾", UNCLASSIFIED_LABEL):
             return idc
-        return f"{idc}{MULTI_POSITION_MARKER}"
+        suffix = NESTED_POSITION_MARKER if is_nested else ""
+        if position is not None:
+            return f"{idc}{position}{suffix}"
+        return f"{idc}{MULTI_POSITION_MARKER}{suffix}"
 
     def group_by_position(
         self,
@@ -659,28 +687,30 @@ class HanziCore:
         """將 chars 按頂層 IDC 位置分組，回傳 (label, sorted_chars) 排序好的 list。
 
         - 每組內字依 Unicode 升序；空組不出現
-        - 組順序：IDC_ORDER 主序、同 IDC 內位置升序（1→2→3→None=≡）
-        - granularity="fine"：label 形如 "⿰1"、"⿰≡"、"〾"、"∅"
-        - granularity="coarse"：label 只用 IDC 字元（"⿰"、"⿱"、"〾"、"∅"）
+        - 組順序：IDC_ORDER 主序 → 位置升序（1<2<3<None=≡）→ 同位置直接優先（⿰2 在 ⿰2· 前）
+        - granularity="fine"：label 形如 "⿰1"、"⿰2·"、"⿰≡"、"⿰≡·"、"〾"、"∅"
+        - granularity="coarse"：label 只用 IDC 字元（"⿰"、"⿱"、"〾"、"∅"），不出現位置/≡/·
         """
-        buckets: Dict[Tuple[str, Optional[int]], List[str]] = {}
+        buckets: Dict[Tuple[str, Optional[int], bool], List[str]] = {}
         for c in chars:
             key = self.classify_by_position(c, query_components, granularity)
             buckets.setdefault(key, []).append(c)
 
-        def sort_key(key: Tuple[str, Optional[int]]):
-            idc, pos = key
+        def sort_key(key: Tuple[str, Optional[int], bool]):
+            idc, pos, is_nested = key
             idx = IDC_ORDER.find(idc)
             if idx < 0:
                 idx = len(IDC_ORDER)
-            return (idx, float("inf") if pos is None else pos)
+            return (idx, float("inf") if pos is None else pos, int(is_nested))
 
         result: List[Tuple[str, List[str]]] = []
         for key in sorted(buckets, key=sort_key):
-            idc, pos = key
+            idc, pos, is_nested = key
             sorted_chars = sorted(buckets[key], key=ord)
             label = (
-                idc if granularity == "coarse" else self.format_position_label(idc, pos)
+                idc
+                if granularity == "coarse"
+                else self.format_position_label(idc, pos, is_nested)
             )
             result.append((label, sorted_chars))
         return result

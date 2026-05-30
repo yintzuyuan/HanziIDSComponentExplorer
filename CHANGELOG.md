@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **右欄按 IDC 位置分組** — 衍生字與多部件交集的呈現從「字符流式拼接」改為按頂層 IDC 位置分行，標籤直接用 IDC 字元呈現（如 `金⿰1 鐘鈴銀…`、`金⿰≡ 鍂…`、`金⿱≡ 鑫𨰻…`），不夾文字描述
-- **衍生字精細分組** — 按頂層 IDC + 位置數字（`⿰1`=左、`⿰2`=右、`⿲1/⿲2/⿲3`=左中右），多個位置都含查詢部件時用 `≡`（如鍂=⿰金金、鑫=⿱金鍂、𨰻=⿱⿰金金⿰金金 都標 `≡`）
+- **衍生字精細分組** — 按頂層 IDC + 位置數字（`⿰1`=左、`⿰2`=右、`⿲1/⿲2/⿲3`=左中右），多個位置都含查詢部件時用 `≡`（如鍂=⿰金金）
+- **嵌套位置標 `·`** — 查詢部件嵌在頂層 operand 的子結構/子字裡（而非該位置本身）時，位置後加中點 `·`（U+00B7）區別：羕=⿱𦍌永 歸 `⿱2`（永 直接是位置 2）、霡=⿱雨⿰月永 歸 `⿱2·`（永 嵌在子結構 ⿰月永 內）、𦻑=⿱艹詠 歸 `⿱2·`（永 嵌在子字 詠 內）；混合直接+嵌套的多位用 `≡·`（如鑫=⿱金鍂、𨰻=⿱⿰金金⿰金金）
 - **多部件交集粗略分組** — 純按頂層 IDC 字元分組（`⿰ 鐘…`、`⿱ …`），不細分位置；多部件查詢時位置維度爆炸故簡化
 - **嵌套位置可推斷** — 查詢部件嵌在頂層子部件內仍歸到「該子部件所在的頂層位置」（搜「立」→ 鐘=⿰金童 歸 `⿰2`，因童含立）
 
@@ -18,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 新增 `HanziCore.classify_by_position(char, query, granularity)` 與 `format_position_label(idc, pos)`、`group_by_position(chars, query, granularity)`；複用既有 `_recursive_components()` 判斷頂層 operand 是否含查詢部件
 - 同字根區既有 3 層分類（結構同+部件同位 > 結構同 > 部件同）保持不變
-- 模組常數新增：`IDC_ARITY`（每個 IDC 的 operand 個數）、`IDC_ORDER`（分組標籤展示順序）、`MULTI_POSITION_MARKER`（`≡`，U+2261）、`UNCLASSIFIED_LABEL`（`∅`，獨體字 fallback）
+- 模組常數新增：`IDC_ARITY`（每個 IDC 的 operand 個數）、`IDC_ORDER`（分組標籤展示順序）、`MULTI_POSITION_MARKER`（`≡`，U+2261）、`NESTED_POSITION_MARKER`（`·`，U+00B7）、`UNCLASSIFIED_LABEL`（`∅`，獨體字 fallback）
 
 ## [1.1.1] - 2026-05-28
 
