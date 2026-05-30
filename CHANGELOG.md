@@ -5,34 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Language note**: From v1.2.0 onwards, CHANGELOG entries are written in English for international readers. Earlier entries (v1.0.x ~ v1.1.x) remain in Traditional Chinese.
+
 ## [1.2.0] - 2026-05-30
 
 ### Added
 
-- **右欄重組為「子部件同位 → --- → 含本字組合」** — 取代既有同字根（sister）3 層渲染、改用 IDC + 位置標籤統一風格：
-  - **上半「子部件同位」**：對複合字 display_char 頂層 IDS 每個 Unicode operand 位置 N、列「`{IDC}{N}` <chars>」、chars 為該位置含同部件的字。例如搜「明」（=⿰日月）→ `⿰1 暉暗暝 …`（日同位）+ `⿰2 朋朗期 …`（月同位）
-  - **下半「含本字組合」**：列含 display_char 作為部件的字、按頂層 IDC 位置細分。例如搜「金」→ `⿰1 鐘鈴銀 …`、`⿰≡ 鍂`、`⿱≡· 鑫𨰻 …`
-  - **`---` 分隔**：條件式、只在上下都有實際內容才插
-  - **葉部件搜尋**（如「金」）上半自動空、整段就是下半的位置細分
-- **位置標籤完整語法**：
-  - `{IDC}{N}`（如 `⿰1`、`⿱2`、`⿲3`）：query 在 c 的頂層位置 N、直接是該 operand
-  - `{IDC}≡`：多個位置都直接含 query（對稱、如 鍂=⿰金金 對搜「金」歸 `⿰≡`）
-  - `{IDC}{N}·` / `{IDC}≡·`：嵌套標 `·`（U+00B7）。query 不直接是位置 N 的 operand、而是嵌在子結構或子字內。例如搜「明」、`⿰1· 鴠`（鴠=⿰旦鳥、日嵌在旦內）；搜「金」、`⿱≡· 鑫`（鑫=⿱金鍂、位置 1 直接金、位置 2 嵌套含金）
-  - 同位置 direct 排在 nested 前（`⿰1` 在 `⿰1·` 前）
-  - 對稱字（如 林=⿰木木）位置 1、2 各自獨立一行、不合併 `⿰≡`
-- **多部件交集粗略分組** — 搜 2+ 部件（如「金童」）右欄交集按頂層 IDC 字元分組（`⿰ 鐘 …`），不細分位置（多部件位置維度爆炸故簡化）
-- **嵌套位置可推斷** — 查詢部件嵌在頂層子部件內仍歸到「該子部件所在的頂層位置」。例如搜「立」→ 鐘=⿰金童 歸 `⿰2`（立 嵌在童裡、童在 ⿰2）
+- **Right panel redesigned as "Sub-component co-position → `---` → Containing-self compositions"** — Replaces the previous three-tier sister-character rendering with a unified IDC + position label style:
+  - **Upper section "Sub-component co-position"**: For each Unicode operand at position N in the top-level IDS of a compound `display_char`, output one line `{IDC}{N} <chars>` where chars are characters that have the same component at the same top-level position. Example: searching 明 (`⿰日月`) → `⿰1 暉暗暝 …` (日 co-positioned at `⿰1`) + `⿰2 朋朗期 …` (月 co-positioned at `⿰2`)
+  - **Lower section "Containing-self compositions"**: Lists characters that use `display_char` as a component, grouped by top-level IDC position. Example: searching 金 → `⿰1 鐘鈴銀 …`, `⿰≡ 鍂`, `⿱≡· 鑫𨰻 …`
+  - **`---` separator**: Conditional — inserted only when both upper and lower sections have actual content
+  - **Leaf component search** (e.g., 金): upper section is automatically empty; the entire panel is the lower section's position-grouped breakdown
+- **Complete position label syntax**:
+  - `{IDC}{N}` (e.g., `⿰1`, `⿱2`, `⿲3`): query is the direct operand at top-level position N of c
+  - `{IDC}≡`: multiple positions directly contain the query (symmetric — e.g., 鍂=`⿰金金` → `⿰≡` when searching 金)
+  - `{IDC}{N}·` / `{IDC}≡·`: nested suffix `·` (U+00B7). Query is not directly the operand at position N, but is nested inside a substructure or sub-character. Examples: searching 明 → `⿰1· 鴠` (鴠=`⿰旦鳥`, 日 nested inside 旦); searching 金 → `⿱≡· 鑫` (鑫=`⿱金鍂`, position 1 direct, position 2 nested via 鍂)
+  - Same position: direct rows come before nested rows (`⿰1` before `⿰1·`)
+  - Symmetric characters (e.g., 林=`⿰木木`): positions 1 and 2 each get their own row, not merged into `⿰≡`
+- **Multi-component intersection coarse grouping** — Searching 2+ components (e.g., 金童), the intersection groups by top-level IDC character (`⿰ 鐘 …`) without sub-position breakdown (position dimensions explode with multi-component queries, so coarse grouping keeps results readable)
+- **Nested position inferred** — When the query is nested inside a top-level sub-component, it's still attributed to "the position where that sub-component lives". Example: searching 立 → 鐘=`⿰金童` is grouped under `⿰2` (because 立 is nested inside 童, which lives at `⿰2`)
 
 ### Changed (breaking)
 
-- **移除同字根（sister）3 層分類渲染** — 既有「結構相同部件同位」「結構部件相同」「部件相同」整段從右欄消失。「結構相同部件同位」第一層的同位資訊由新「子部件同位」上半取代（label 改為 IDC + 位置）；後兩層「結構同/部件同但不同位」的字需透過中欄點該部件切視角取得（既有中欄機制不受影響、`find_sister_characters` core method 保留以備他用）
+- **Removed sister three-tier rendering** — The existing tiers "結構相同部件同位" (same structure, same component at same position), "結構部件相同" (same structure, same component), and "部件相同" (same component) are removed from the right panel. The first tier's co-position information is replaced by the new "Sub-component co-position" upper section (label style changed to IDC + position). Characters from the latter two tiers ("same structure / same component but different position") are now accessed by clicking the component in the middle column to switch perspective (existing middle-column switching unaffected; `find_sister_characters` core method preserved for potential future use)
 
 ### Internal
 
-- 新增 `HanziCore` methods：`classify_by_position(char, query, granularity)`、`format_position_label(idc, pos, is_nested)`、`group_by_position(chars, query, granularity)`、`compose_immediate_component_lines(derived_groups, display_char)`、`_top_position_contains(c, target_idc, target_position, query)`、`_operand_directly_is(operand_tokens, query_set)`、`_operand_contains(operand_tokens, query_set)`；複用既有 `_recursive_components()` 判斷頂層 operand 是否含查詢部件
-- `update_related_display` 簡化為 upper/lower 兩段組裝；新增 UI helper `_apply_chars_filters` 封裝「排除已列字 + 顏色 + 筆畫」三道篩選
-- 模組常數新增：`IDC_ARITY`（每個 IDC 的 operand 個數、含 〾 = 1）、`IDC_ORDER`（分組展示順序）、`MULTI_POSITION_MARKER`（`≡`，U+2261）、`NESTED_POSITION_MARKER`（`·`，U+00B7）、`UNCLASSIFIED_LABEL`（`∅`，獨體字 fallback）
-- IDS 解析輔助：module-level `_split_top_operands(tokens)`、`_skip_one_operand(tokens, pos)`
+- New `HanziCore` methods: `classify_by_position(char, query, granularity)`, `format_position_label(idc, pos, is_nested)`, `group_by_position(chars, query, granularity)`, `compose_immediate_component_lines(derived_groups, display_char)`, `_top_position_contains(c, target_idc, target_position, query)`, `_operand_directly_is(operand_tokens, query_set)`, `_operand_contains(operand_tokens, query_set)`; reuses existing `_recursive_components()` to check whether a top-level operand contains the query
+- `update_related_display` simplified to upper/lower two-section assembly; new UI helper `_apply_chars_filters` encapsulates the three filters (already-listed exclusion + color + stroke)
+- New module-level helper `resolve_display_char(char, sticky, current)` resolves which character to display in the right panel (explicit > sticky > current_char), fixing the sub-component view stroke-filter regression where switching filters reverted the panel back to the base character
+- New module constants: `IDC_ARITY` (operand count per IDC, including 〾=1), `IDC_ORDER` (group display order), `MULTI_POSITION_MARKER` (`≡`, U+2261), `NESTED_POSITION_MARKER` (`·`, U+00B7), `UNCLASSIFIED_LABEL` (`∅`, leaf character fallback)
+- IDS parsing helpers: module-level `_split_top_operands(tokens)`, `_skip_one_operand(tokens, pos)`
 
 ## [1.1.1] - 2026-05-28
 
