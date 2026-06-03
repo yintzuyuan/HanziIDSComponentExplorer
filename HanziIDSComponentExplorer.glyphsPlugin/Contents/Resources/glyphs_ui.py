@@ -1444,14 +1444,13 @@ class HanziComponentSearchTool:
         lower_lines = []
         related_chars = set()
 
-        derived_groups = {}
-        if self.show_derived:
-            derived_groups = self.core.find_derived_characters(display_char, charset)
+        # 上半恆顯示、下半受衍生字開關控制（gate 已收斂進 resolver、修正 #17）
+        upper_pairs, lower_chars = self.core.resolve_related_sections(
+            display_char, charset, self.show_derived
+        )
 
         # 上半：子部件同位（display_char 頂層每個 Unicode operand 一行、filter 該位置同位的字）
-        for label, chars in self.core.compose_immediate_component_lines(
-            derived_groups, display_char
-        ):
+        for label, chars in upper_pairs:
             filtered = self._apply_chars_filters(
                 chars, display_char, related_chars, stroke_max_diff
             )
@@ -1459,10 +1458,9 @@ class HanziComponentSearchTool:
                 upper_lines.append(f"{label} {''.join(filtered)}")
                 related_chars.update(filtered)
 
-        # 下半：含本字作為部件的字（derived_groups[display_char]、按位置細分）
-        self_chars = derived_groups.get(display_char, [])
+        # 下半：含本字作為部件的字（resolver 已依 show_derived gate；沒勾選時 lower_chars 為 []）
         self_chars = self._apply_chars_filters(
-            self_chars, display_char, related_chars, stroke_max_diff
+            lower_chars, display_char, related_chars, stroke_max_diff
         )
         if self_chars:
             for label, chars in self.core.group_by_position(

@@ -544,3 +544,26 @@ class TestGroupByPositionCoarse:
         """coarse：鍂 = ⿰金金 仍歸 ⿰，不會升為 ⿰≡。"""
         groups = core_position.group_by_position(["鍂", "鐘"], ["金"], "coarse")
         assert groups == [("⿰", ["鍂", "鐘"])]  # 鍂 U+9342 < 鐘 U+9418
+
+
+class TestResolveRelatedSections:
+    """resolve_related_sections：右欄上下半資料選取 + 衍生字開關 gate。
+
+    回歸守護（#17）：v1.2.0(#15) 誤把「子部件同位」(上半) 也 gate 進
+    show_derived，導致沒勾選時右欄退回只顯示本字。語意：上半恆顯示、
+    開關只控制下半「含本字組合」。
+    """
+
+    def test_upper_always_shown_regardless_of_switch(self, core_position):
+        """子部件同位（上半）不受 show_derived 控制（修復前沒勾選會是 []）。"""
+        upper_off, _ = core_position.resolve_related_sections("鐘", None, False)
+        upper_on, _ = core_position.resolve_related_sections("鐘", None, True)
+        assert upper_off  # 沒勾選、上半仍非空 ← 捕捉 #17
+        assert upper_off == upper_on  # 上半不因開關改變
+
+    def test_lower_gated_by_switch(self, core_position):
+        """含本字組合（下半）受 show_derived 控制。"""
+        _, lower_off = core_position.resolve_related_sections("金", None, False)
+        _, lower_on = core_position.resolve_related_sections("金", None, True)
+        assert lower_off == []  # 沒勾選 → 下半空
+        assert set(lower_on)  # 勾選 → 下半非空（含金的字）
