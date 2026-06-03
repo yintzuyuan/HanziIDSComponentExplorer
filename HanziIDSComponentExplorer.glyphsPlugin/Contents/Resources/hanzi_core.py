@@ -1062,6 +1062,28 @@ class HanziCore:
 
         return derived_groups
 
+    def resolve_related_sections(
+        self,
+        display_char: str,
+        charset: Optional[Set[str]],
+        show_derived: bool,
+    ) -> Tuple[List[Tuple[str, List[str]]], List[str]]:
+        """解析右欄上下半的原始字集（未套 color / stroke filter）。
+
+        回 (upper_pairs, lower_chars)：
+        - upper_pairs: 子部件同位 [(label, [chars]), …]，恆計算（不受 show_derived 控制）
+        - lower_chars: 含本字整字的衍生字 list；show_derived=False 時為 []
+
+        修正 #17 回歸：上半同位字是 v1.1.x「結構相同部件同位」的延續、應恆顯示；
+        衍生字開關只控制下半「含本字組合」。
+        """
+        derived_groups = self.find_derived_characters(display_char, charset)
+        upper_pairs = self.compose_immediate_component_lines(
+            derived_groups, display_char
+        )
+        lower_chars = derived_groups.get(display_char, []) if show_derived else []
+        return upper_pairs, lower_chars
+
     # === 字符拆解 ===
 
     def decompose(

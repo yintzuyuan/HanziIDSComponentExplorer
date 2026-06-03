@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Language note**: From v1.2.0 onwards, CHANGELOG entries are written in English for international readers. Earlier entries (v1.0.x ~ v1.1.x) remain in Traditional Chinese.
 
+## [1.2.1] - 2026-06-04
+
+### Fixed
+
+- **Right panel went blank (showed only the character itself) when the "Derived characters" checkbox was unchecked** (#17) — Regression introduced in v1.2.0 (#15). The `update_related_display` rewrite accidentally gated the upper "Sub-component co-position" section behind the `show_derived` flag: its data source (`derived_groups`) was only computed when the checkbox was on, so unchecking it left both sections empty and the panel fell back to displaying the character alone. That upper section is the continuation of v1.1.x's always-shown "結構相同部件同位" tier and must not be gated. Fixed by extracting data selection into a unit-testable `HanziCore.resolve_related_sections`: the upper "Sub-component co-position" section is now always computed, and the checkbox only controls the lower "Containing-self compositions" section. Added regression-guard tests asserting the upper section stays non-empty regardless of the toggle. (Leaf components such as 言/金 have no upper section by design and still show only themselves when unchecked.)
+
 ## [1.2.0] - 2026-05-30
 
 ### Added
