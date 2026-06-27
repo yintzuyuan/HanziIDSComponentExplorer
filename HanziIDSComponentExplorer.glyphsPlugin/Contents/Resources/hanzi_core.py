@@ -108,6 +108,63 @@ def resolve_display_char(
     return sticky or current
 
 
+def _is_pua(code_point: int) -> bool:
+    """是否為 Private Use Area 碼位（BMP PUA 與兩個補充平面 PUA）。"""
+    return (
+        0xE000 <= code_point <= 0xF8FF
+        or 0xF0000 <= code_point <= 0xFFFFD
+        or 0x100000 <= code_point <= 0x10FFFD
+    )
+
+
+def field_display_char(text: Optional[str]) -> Optional[str]:
+    """決定搜尋框（NSSearchField）該以哪個字的字型渲染，無則回 None（用系統字型）。
+
+    NSSearchField 整欄只能用單一字型，故策略為：
+    1) 框內含造字（PUA）→ 用第一個 PUA 字驅動（系統字型必缺這些字、且單一字型
+       只能擇一，造字最該優先顯示，避免被前導 ASCII／CJK 蓋過）；
+    2) 否則整段皆非 ASCII（CJK／亞美尼亞等同書寫系統）→ 用首字；
+    3) 含 ASCII 且無 PUA（如 U+XXXX 十六進位查詢）→ None（維持系統字型）。
+
+    註：單一字型欄位無法逐字混排；真正的逐字渲染在左／中／右面板。
+    """
+    if not text:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    for ch in stripped:
+        if _is_pua(ord(ch)):
+            return ch
+    if all(ord(ch) > 127 for ch in stripped):
+        return stripped[0]
+    return None
+
+
+def glyph_font_runs(text: Optional[str]) -> List[Tuple[str, bool]]:
+    """將文字切成 (子字串, 需逐字解析字型) 的連續段。
+
+    連續 ASCII（<128）併為一段、回 False（用基準系統字型即可）；
+    每個非 ASCII 字各自成段、回 True（需 get_font_for_char 逐字解析，
+    因 CJK／亞美尼亞／PUA 造字／樹狀符號可能各需不同字型，不可併用單一字型）。
+
+    用於中欄結果列表的自訂儲存格逐字繪製；保證各段串接後等於原字串。
+    """
+    runs: List[Tuple[str, bool]] = []
+    ascii_buf: List[str] = []
+    for ch in text or "":
+        if ord(ch) > 127:
+            if ascii_buf:
+                runs.append(("".join(ascii_buf), False))
+                ascii_buf = []
+            runs.append((ch, True))
+        else:
+            ascii_buf.append(ch)
+    if ascii_buf:
+        runs.append(("".join(ascii_buf), False))
+    return runs
+
+
 def _split_top_operands(tokens: List[str]) -> List[List[str]]:
     """將 IDS tokens 按頂層 IDC 切出 operands sub-list。
 
