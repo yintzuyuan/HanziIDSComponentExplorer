@@ -108,6 +108,156 @@ def resolve_display_char(
     return sticky or current
 
 
+def _is_pua(code_point: int) -> bool:
+    """是否為 Private Use Area 碼位（BMP PUA 與兩個補充平面 PUA）。"""
+    return (
+        0xE000 <= code_point <= 0xF8FF
+        or 0xF0000 <= code_point <= 0xFFFFD
+        or 0x100000 <= code_point <= 0x10FFFD
+    )
+
+
+def field_display_char(text: Optional[str]) -> Optional[str]:
+    """決定搜尋框（NSSearchField）該以哪個字的字型渲染，無則回 None（用系統字型）。
+
+    NSSearchField 整欄只能用單一字型，故策略為：
+    1) 框內含造字（PUA）→ 用第一個 PUA 字驅動（系統字型必缺這些字、且單一字型
+       只能擇一，造字最該優先顯示，避免被前導 ASCII／CJK 蓋過）；
+    2) 否則整段皆非 ASCII（CJK／亞美尼亞等同書寫系統）→ 用首字；
+    3) 含 ASCII 且無 PUA（如 U+XXXX 十六進位查詢）→ None（維持系統字型）。
+
+    註：單一字型欄位無法逐字混排；真正的逐字渲染在左／中／右面板。
+    """
+    if not text:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    for ch in stripped:
+        if _is_pua(ord(ch)):
+            return ch
+    if all(ord(ch) > 127 for ch in stripped):
+        return stripped[0]
+    return None
+
+
+def glyph_font_runs(text: Optional[str]) -> List[Tuple[str, bool]]:
+    """將文字切成 (子字串, 需逐字解析字型) 的連續段。
+
+    連續 ASCII（<128）併為一段、回 False（用基準系統字型即可）；
+    每個非 ASCII 字各自成段、回 True（需 get_font_for_char 逐字解析，
+    因 CJK／亞美尼亞／PUA 造字／樹狀符號可能各需不同字型，不可併用單一字型）。
+
+    用於中欄結果列表的自訂儲存格逐字繪製；保證各段串接後等於原字串。
+    """
+    runs: List[Tuple[str, bool]] = []
+    ascii_buf: List[str] = []
+    for ch in text or "":
+        if ord(ch) > 127:
+            if ascii_buf:
+                runs.append(("".join(ascii_buf), False))
+                ascii_buf = []
+            runs.append((ch, True))
+        else:
+            ascii_buf.append(ch)
+    if ascii_buf:
+        runs.append(("".join(ascii_buf), False))
+    return runs
+
+
+def font_cache_key(
+    char: str, size: float, font_family: Optional[str]
+) -> Tuple[str, float, Optional[str]]:
+    """組 get_font_for_char 的字型快取鍵，把當前文件家族名納入識別。
+
+    last_resort（PUA 造字）的字型解析依「當前開啟 Glyphs 文件的家族名」而定，
+    故同一 (char, size) 在不同文件可能應對到不同字型。鍵不含家族身分時會跨文件
+    誤命中、回傳前一文件的陳舊字型（#19 回歸）。font_family 空字串正規化為 None，
+    使「無開啟文件」狀態有穩定且一致的鍵。
+    """
+    return (char, size, font_family or None)
+
+
+def utf16_len(text: str) -> int:
+    """字串的 UTF-16 碼元長度（補充平面字計 2，BMP 計 1）。
+
+    CoreText 的 CTFontCreateForString range 以 UTF-16 計量，Python len() 以碼位計量；
+    補充平面字（CJK Ext-B、補充平面 PUA）若用 len() 只涵蓋前導代理，故需此換算。
+    """
+    return sum(2 if ord(ch) > 0xFFFF else 1 for ch in text or "")
+
+
+def choose_glyph_font_source(
+    family_covers: bool, covering_found: bool
+) -> Optional[str]:
+    """PUA 缺字字型解析的優先序：回 'family' / 'covering' / None。
+
+    1) 當前文件同名安裝字型確實涵蓋 → 'family'（編輯中優先）；
+    2) 否則有其他已安裝字型涵蓋 → 'covering'；
+    3) 都沒有 → None（退系統字型、由負向快取記住待重試）。
+
+    第 3 步必為 None，不可退回「已確認不涵蓋」的同名字型——否則上層會把它當正向
+    結果快取（sticky 豆腐、forget_missing 清不掉）。見 [[FontCache]] 負向快取設計。
+    """
+    if family_covers:
+        return "family"
+    if covering_found:
+        return "covering"
+    return None
+
+
+class FontCache:
+    """get_font_for_char 的字型快取：正向（鍵→字型）與負向（鍵→已知無涵蓋字型）。
+
+    負向快取是效能關鍵：某 PUA 碼位無任何已安裝字型涵蓋時，若不記住，中欄 cell
+    每次重繪都會重跑全字型暴力掃描造成捲動卡頓。負向項視為暫時性（使用者可能稍後
+    安裝字型），故 forget_missing() 於新搜尋時清掉以重試；正向項（家族已納入鍵、
+    永久有效）保留不動。容量達上限時驅逐前半，負向項一併計入避免無上限成長。
+
+    純資料結構、不依賴 AppKit：字型值為不透明物件，由 UI 層注入。
+    """
+
+    _MISSING = object()  # sentinel：此鍵已知無涵蓋字型
+
+    def __init__(self, max_size: int = 500):
+        self._cache: Dict = {}
+        self._max_size = max_size
+
+    def lookup(self, key) -> Tuple[str, object]:
+        """回 (state, font)：('hit', font) / ('missing', None) / ('miss', None)。"""
+        if key not in self._cache:
+            return ("miss", None)
+        value = self._cache[key]
+        if value is self._MISSING:
+            return ("missing", None)
+        return ("hit", value)
+
+    def store(self, key, font) -> None:
+        self._evict_if_needed()
+        self._cache[key] = font
+
+    def store_missing(self, key) -> None:
+        self._evict_if_needed()
+        self._cache[key] = self._MISSING
+
+    def forget_missing(self) -> None:
+        """清掉所有負向項，讓無涵蓋字型的碼位於下次重新解析（可能已裝新字型）。"""
+        self._cache = {
+            k: v for k, v in self._cache.items() if v is not self._MISSING
+        }
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+    def _evict_if_needed(self) -> None:
+        if len(self._cache) >= self._max_size:
+            for k in list(self._cache.keys())[: self._max_size // 2]:
+                del self._cache[k]
+
+
 def _split_top_operands(tokens: List[str]) -> List[List[str]]:
     """將 IDS tokens 按頂層 IDC 切出 operands sub-list。
 
