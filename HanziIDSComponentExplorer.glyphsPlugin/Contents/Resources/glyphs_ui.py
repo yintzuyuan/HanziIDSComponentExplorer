@@ -42,6 +42,7 @@ from hanzi_core import (
     resolve_search_action,
     resolve_display_char,
     field_display_char,
+    flow_layout,
     glyph_font_runs,
     font_cache_key,
     FontCache,
@@ -64,6 +65,11 @@ STROKE_FILTER_VALUES = [0, 1, 2, 3, 5]
 STROKE_FILTER_OFF_TICK = 5
 STROKE_FILTER_TICK_COUNT = STROKE_FILTER_OFF_TICK + 1  # 6 個 tick 位置
 
+# 底部控制列流式佈局（#23：依語言量測 checkbox 寬度後動態擺放，避免英文 label 截斷）
+BOTTOM_BAR_START_X = 114  # 第一個 checkbox 起點，對齊中欄 resultList（x=114）
+BOTTOM_BAR_GAP = 8  # 流式元件彼此、及最後一個元件與滑桿之間的水平間距
+BOTTOM_BAR_CHECKBOX_PADDING = 4  # sizeToFit 後加的安全邊距，避免次像素裁切
+
 # 右側相關字區域排版設定
 RELATED_CHARS_KERN = 0.0  # 字距（字符間距，單位：點）- 預設值
 RELATED_CHARS_LINE_HEIGHT = 1.2  # 行高倍數（相對於字體大小）
@@ -83,6 +89,16 @@ GLYPH_COLOR_MAP = {
     10: (0.75, 0.75, 0.75, 1.0),  # 淺灰
     11: (0.50, 0.50, 0.50, 1.0),  # 深灰
 }
+
+
+def _measured_checkbox_width(checkbox):
+    """量測 vanilla CheckBox 容納其 label 的自然寬度（勾選框 + 文字 + 安全邊距）。
+
+    依各語言實際渲染量測（en/zh/ja 字串長度不一），供 flow_layout 動態排版（#23）。
+    """
+    button = checkbox.getNSButton()
+    button.sizeToFit()
+    return button.frame().size.width + BOTTOM_BAR_CHECKBOX_PADDING
 
 
 class _HanziListCellBase(NSTextFieldCell):
@@ -240,7 +256,7 @@ class HanziComponentSearchTool:
         self.w = vanilla.FloatingWindow(
             (520, 440),
             window_title,
-            minSize=(420, 300),
+            minSize=(470, 300),  # #23：英文流式佈局後仍須留給滑桿可用寬度
             maxSize=(1000, 1000),
             autosaveName="com.YinTzuYuan.HanziIDSComponentExplorer.MainWindow",
         )
@@ -416,6 +432,9 @@ class HanziComponentSearchTool:
         ns_button.setButtonType_(0)  # NSButtonTypeMomentaryLight - 點擊時高亮
         ns_button.setShowsBorderOnlyWhileMouseInside_(True)
         ns_button.setBordered_(True)
+
+        # 量測各語言 checkbox 寬度後流式排版底部列，避免英文 label 截斷（#23）
+        self._layout_bottom_bar()
 
         # === 載入字集設定 ===
         # 載入上次的自訂字集設定（如果有）
@@ -1521,6 +1540,23 @@ class HanziComponentSearchTool:
         if diff is None:
             return L("slider_stroke_off")
         return f"±{diff}"
+
+    def _layout_bottom_bar(self):
+        """量測兩個 checkbox 的實際寬度後流式排版底部列（#23）。
+
+        固定座標假設了某語言的字串長度（英文 "Deep Analysis" 比中日文長），
+        會讓英文 label 截斷。改以實機量測 + flow_layout 純函式動態擺放：
+        deepAnalysis → derived 由左到右浮動，滑桿左緣接續其後（右緣維持 -76）。
+        """
+        widths = [
+            _measured_checkbox_width(self.w.deepAnalysisCheckbox),
+            _measured_checkbox_width(self.w.showDerivedCheckbox),
+        ]
+        positions, next_x = flow_layout(BOTTOM_BAR_START_X, widths, BOTTOM_BAR_GAP)
+        (deep_x, deep_w), (derived_x, derived_w) = positions
+        self.w.deepAnalysisCheckbox.setPosSize((deep_x, -36, deep_w, 22))
+        self.w.showDerivedCheckbox.setPosSize((derived_x, -36, derived_w, 22))
+        self.w.strokeFilterSlider.setPosSize((next_x, -34, -76, 18))
 
     def _refresh_stroke_filter_display(self):
         """同步更新滑桿 tooltip 與右側 inline 狀態文字"""
