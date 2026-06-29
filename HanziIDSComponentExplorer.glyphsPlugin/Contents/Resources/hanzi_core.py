@@ -133,6 +133,27 @@ def resolve_search_action(
     return "search" if font_open else "gate"
 
 
+def flow_layout(
+    start_x: float, widths: List[float], gap: float
+) -> Tuple[List[Tuple[float, float]], float]:
+    """將一串元件從 start_x 起由左到右依序排列（純函式，UI 黏合靠實機量測）。
+
+    用於底部控制列：checkbox 依語言量測（sizeToFit）後流式擺放、滑桿接續其後，
+    取代「固定座標假設某語言字串長度」而導致英文 label 截斷的舊作法（#23）。
+
+    回傳 (positions, next_x)：
+    - positions 與 widths 對應，每個 (x, width)
+    - next_x 是最後一個元件之後（含一個尾隨 gap）的下一個起始 x，供滑桿左緣接續；
+      widths 為空時等於 start_x（不含尾隨 gap）。
+    """
+    positions: List[Tuple[float, float]] = []
+    x = start_x
+    for w in widths:
+        positions.append((x, w))
+        x += w + gap
+    return positions, x
+
+
 def field_display_char(text: Optional[str]) -> Optional[str]:
     """決定搜尋框（NSSearchField）該以哪個字的字型渲染，無則回 None（用系統字型）。
 
