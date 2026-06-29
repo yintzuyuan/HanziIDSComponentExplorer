@@ -108,6 +108,31 @@ def resolve_display_char(
     return sticky or current
 
 
+def resolve_search_action(
+    input_text: Optional[str],
+    font_open: bool,
+    has_selected_char: bool,
+    is_complete: bool,
+) -> str:
+    """決定搜尋框 callback 該執行的動作（純函式，UI 只負責 dispatch）。
+
+    統一兩個 UI bug 的決策：#21 無字型時的搜尋閘門、#22 清空搜尋框的回退行為。
+
+    回傳動作字串：
+    - "auto"   清空輸入且當前有選中字 → 回到自動模式顯示該字（#22）
+    - "clear"  清空輸入且無選中字 → 三欄清成空白（#22）
+    - "noop"   非空但輸入未完整 → 維持現狀等待（既有行為）
+    - "gate"   非空且完整、但未開字型 → 閘門擋下（#21：避免回退對整個 IDS
+               資料庫查詢而崩潰），改顯示提示
+    - "search" 非空、完整、已開字型 → 執行搜尋
+    """
+    if not (input_text or "").strip():
+        return "auto" if has_selected_char else "clear"
+    if not is_complete:
+        return "noop"
+    return "search" if font_open else "gate"
+
+
 def _is_pua(code_point: int) -> bool:
     """是否為 Private Use Area 碼位（BMP PUA 與兩個補充平面 PUA）。"""
     return (
