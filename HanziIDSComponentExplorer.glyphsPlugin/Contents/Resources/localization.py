@@ -28,6 +28,13 @@ STRINGS = {
         "zh-Hans": "输入汉字或 Unicode 编码",
         "ja": "漢字または Unicode を入力",
     },
+    # 搜尋閘門提示（未開字型時，#21）
+    "hint_open_font": {
+        "en": "Open a font file to search",
+        "zh-Hant": "請先開啟字型檔案",
+        "zh-Hans": "请先打开字体文件",
+        "ja": "フォントファイルを開いてください",
+    },
     # CheckBox
     "checkbox_deep_analysis": {
         "en": "Deep Analysis",

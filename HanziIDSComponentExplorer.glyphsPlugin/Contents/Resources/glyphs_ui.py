@@ -46,6 +46,7 @@ import CoreText
 from hanzi_core import (
     HanziCore,
     is_complete_search_input,
+    resolve_search_action,
     resolve_display_char,
     field_display_char,
     glyph_font_runs,
@@ -751,10 +752,11 @@ class HanziComponentSearchTool:
         """
         當前字符變化時的回調函式（透過 UPDATEINTERFACE 通知觸發）
 
-        自動模式行為：
+        自動模式行為（搜尋框恆為空，與清空搜尋框路徑共用 resolve_search_action）：
         1. 清空搜尋框（不填入字符）
         2. 使用多 Unicode 智能偵測找到資料庫中存在的字符
-        3. 設定 current_char 並觸發搜尋
+        3. 有資料 → 設定 current_char 並觸發搜尋
+        4. 當前字無資料庫資料（如拉丁字母）→ 視為無選擇，清空三欄
 
         注意：手動模式時此方法會提前返回（Issue #31：視窗聚焦模式）
 
@@ -773,17 +775,11 @@ class HanziComponentSearchTool:
             if self.adapter.is_ime_input_active():
                 return
 
-            # 取得當前字型
-            font = self.adapter.get_current_font()
-            if not font or not font.selectedLayers:
+            # 取得當前選中字形（與 #22 清空回退共用 _current_selection_glyph）
+            glyph = self._current_selection_glyph()
+            if glyph is None:
                 return
 
-            # 取得當前 glyph
-            layer = font.selectedLayers[0]
-            if not layer or not layer.parent:
-                return
-
-            glyph = layer.parent
             current_glyph_name = glyph.name  # 使用 glyph name 作為識別
 
             # 只在字符改變時執行（避免過度觸發）
@@ -795,20 +791,55 @@ class HanziComponentSearchTool:
             # 多 Unicode 智能選擇：找到資料庫中存在的字符
             valid_char = self.find_valid_unicode_for_char(glyph)
 
-            if valid_char:
-                # 清空搜尋框
-                self.w.inputText.set("")
-                self._update_search_field_font()
-
-                # 設定當前字符並觸發搜尋（換主字 → reset 右欄子部件 sticky）
-                self.current_char = valid_char
-                self._right_panel_char = None
-                self.perform_search()
+            # 自動模式搜尋框恆為空：與清空搜尋框路徑共用 resolve_search_action，
+            # 確保「當前字無資料庫資料（如拉丁字母）」兩路徑一致視為無選擇而清空。
+            self.w.inputText.set("")
+            self._update_search_field_font()
+            action = resolve_search_action(
+                "",
+                font_open=True,
+                has_selected_char=valid_char is not None,
+                is_complete=False,
+            )
+            if action == "auto":
+                # 換主字 → 設 current_char、reset 右欄子部件 sticky、觸發搜尋
+                self._show_selection_char(valid_char)
+            else:  # "clear"：當前字無資料 → 清空中／左／右三欄
+                self._clear_all_results()
 
         except:
             import traceback
 
             print(traceback.format_exc())
+
+    def _current_selection_glyph(self):
+        """目前 Glyphs 選中的字形物件；無開檔／無選取則回 None。
+
+        供自動跟隨（on_glyph_changed）與 #22 清空回退（_current_selection_char）共用。
+        """
+        font = self.adapter.get_current_font()
+        if not font or not font.selectedLayers:
+            return None
+        layer = font.selectedLayers[0]
+        if not layer or not layer.parent:
+            return None
+        return layer.parent
+
+    def _current_selection_char(self):
+        """目前選中字形對應、且資料庫存在的字；無開檔／無選取／查無則回 None。"""
+        glyph = self._current_selection_glyph()
+        if glyph is None:
+            return None
+        try:
+            return self.find_valid_unicode_for_char(glyph)
+        except Exception:
+            return None
+
+    def _show_selection_char(self, char):
+        """#22：搜尋框清空且當前有選中字 → 回到自動模式顯示該字。"""
+        self.current_char = char
+        self._right_panel_char = None
+        self.perform_search()
 
     def toggle_auto_fetch(self, sender):
         """
@@ -860,25 +891,33 @@ class HanziComponentSearchTool:
             pass
 
     def search_callback(self, sender):
-        """
-        搜尋框輸入回調
+        """搜尋框輸入回調：由 resolve_search_action 決定動作後 dispatch。
 
-        當用戶在搜尋框輸入時：
-        1. 進入手動模式
-        2. 只有輸入完整有效格式時才執行搜尋
+        統一 #21（無字型閘門）與 #22（清空回到當前字／清空白）：UI 只計算
+        runtime 狀態、純函式決定動作，避免無字型時回退查全庫而崩潰。
         """
-        # 用戶開始輸入 → 進入手動模式
         input_text = self.w.inputText.get().strip()
         # 依內容更新搜尋框字型（造字／部件可正確顯示）
         self._update_search_field_font()
-        if input_text:
+
+        selected_char = self._current_selection_char()
+        action = resolve_search_action(
+            input_text,
+            font_open=self.adapter.get_current_font() is not None,
+            has_selected_char=selected_char is not None,
+            is_complete=is_complete_search_input(input_text),
+        )
+
+        if action == "search":
             self.is_manual_mode = True
-
-        # 只有完整有效的輸入才執行搜尋，否則保持原顯示
-        if not is_complete_search_input(input_text):
-            return
-
-        self.perform_search()
+            self.perform_search()
+        elif action == "auto":
+            self._show_selection_char(selected_char)
+        elif action == "clear":
+            self._clear_all_results()
+        elif action == "gate":
+            self._clear_all_results(L("hint_open_font"))
+        # "noop"：輸入未完整，保持原顯示
 
     def perform_search(self):
         """
@@ -887,6 +926,11 @@ class HanziComponentSearchTool:
         自動模式：使用 self.current_char（已由 on_glyph_changed 設定）
         手動模式：使用搜尋框內容
         """
+        # #21 防禦：無字型開啟時不查詢（避免 charset 回退對整個 IDS 資料庫
+        # 查詢而崩潰）；正常閘門與提示在 search_callback dispatch 處理。
+        if self.adapter.get_current_font() is None:
+            return
+
         # 新搜尋時：先清負向快取（讓期間安裝的字型重試；forget_missing 不動
         # 正向項），再偵測參考字型資料夾變動（有變即由 rescan 集中失效並重繪，
         # #26）。順序不可反——rescan 內建重繪會對無涵蓋碼位寫入負向項，
@@ -1083,6 +1127,26 @@ class HanziComponentSearchTool:
         self.w.idsSwitcher.show(False)
         if hasattr(self.w, "cnsLinkButton"):
             self.w.cnsLinkButton.enable(False)
+
+    def _set_related_chars_text(self, text):
+        """設定右欄（相關字）顯示文字；空字串即清空。"""
+        attr_string = self.create_attributed_string(
+            text, RELATED_CHARS_FONT_SIZE, use_enhanced_spacing=True
+        )
+        self.w.relatedChars.getNSTextView().textStorage().setAttributedString_(
+            attr_string
+        )
+
+    def _clear_all_results(self, related_text=""):
+        """清空中／左／右三欄結果（#22 清空搜尋框、#21 閘門共用）。
+
+        related_text 非空時於右欄顯示提示（#21 未開字型提示）。
+        """
+        self.all_results = []
+        self.display_results = []
+        self.w.resultList.set([])
+        self._clear_left_panel()
+        self._set_related_chars_text(related_text)
 
     def _extract_valid_character_from_results(self, results: List) -> Optional[str]:
         """從搜尋結果中提取有效字符"""
