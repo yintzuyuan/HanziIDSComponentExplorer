@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Language note**: From v1.2.0 onwards, CHANGELOG entries are written in English for international readers. Earlier entries (v1.0.x ~ v1.1.x) remain in Traditional Chinese.
 
+## [1.2.2] - 2026-06-29
+
+### Fixed
+
+- **Private-use (PUA) characters showed as tofu (missing-glyph boxes) throughout the plugin** (#19) — IDS-composed glyphs mapped to PUA codepoints (e.g. U+E000) have no script association in the system font cascade, so `CTFontCreateForString` cannot fall back to a user-made font by codepoint and every panel rendered tofu. Fixed by resolving, for any last-resort codepoint, an installed font that actually covers it: first the open document's same-named family, otherwise any installed font whose character set covers the codepoint (so an exported + installed font displays regardless of which document is open). The middle result list now draws per-character fonts via a custom cell, and the search field adopts the PUA-driving font, so PUA, Armenian, CJK and IDC symbols all render in their correct fonts. Pure decomposition/decision logic (`field_display_char`, `glyph_font_runs`) extracted and unit-tested.
+- **Wrong glyph shown after switching between documents that map the same PUA codepoint to different glyphs** — The font cache was keyed only by `(char, size)`, but last-resort resolution depends on the open document's family, so switching documents returned the previous document's cached font. The cache key now includes the document family name (`font_cache_key`).
+- **Scroll lag when results contained a PUA codepoint no installed font covers** — Such a codepoint was never cached, so every redraw (scroll, selection, focus) re-ran a brute-force scan over every installed font family on the main thread. A negative cache (`FontCache`) now records "no covering font" and short-circuits redraws; it is cleared on each new search so a font installed mid-session is retried. A non-covering same-named family is no longer returned as a positive result (would persist as sticky tofu).
+- **Supplementary-plane PUA codepoints mis-detected** — `CTFontCreateForString`'s range was computed with Python `len()` (codepoints) instead of UTF-16 code units, covering only the leading surrogate of astral characters. Fixed via `utf16_len`.
+
+### Internal
+
+- New unit-tested pure helpers in `hanzi_core`: `field_display_char`, `glyph_font_runs`, `font_cache_key`, `FontCache`, `choose_glyph_font_source`, `utf16_len`.
+
 ## [1.2.1] - 2026-06-04
 
 ### Fixed
