@@ -33,6 +33,13 @@ from AppKit import (
     NSTableViewNoColumnAutoresizing,
     NSLineBreakByClipping,
     NSTextFieldCell,
+    NSWorkspace,
+)
+from Foundation import (
+    NSURL,
+    NSSearchPathForDirectoriesInDomains,
+    NSApplicationSupportDirectory,
+    NSUserDomainMask,
 )
 import CoreText
 
@@ -45,6 +52,9 @@ from hanzi_core import (
     font_cache_key,
     FontCache,
     choose_glyph_font_source,
+    fonts_folder_snapshot,
+    is_font_file_name,
+    is_pua,
     utf16_len,
 )
 from glyphs_adapter import GlyphsAdapter, GlyphsSettings
@@ -134,6 +144,9 @@ class _FilterMenuHandlerBase(NSObject):
     def selectCustomCharset_(self, sender):
         self.tool.selectCustomCharset()
 
+    def openReferenceFontsFolder_(self, sender):
+        self.tool.open_reference_fonts_folder()
+
 
 # 使用動態名稱避免重複定義
 FilterMenuHandler = type(filter_handler_class_name, (_FilterMenuHandlerBase,), {})
@@ -213,6 +226,12 @@ class HanziComponentSearchTool:
         self._search_field_font_char = None
         # 已命中、能涵蓋造字的字型家族名（加速後續同類造字、消除掃描延遲）
         self._covering_font_families = []
+
+        # 參考字型資料夾（#26）：快照供變動偵測、字型 lazy 載入供 PUA 最優先解析
+        self._fonts_folder = self._resolve_fonts_folder_path()
+        self._fonts_folder_snapshot = ()
+        self._folder_fonts = None  # None＝待載入；載入後為 [(descriptor, charset), ...]
+        self._rescan_fonts_folder()
 
         # 模式切換：自動模式 vs 手動模式
         # 自動模式：選擇字符時清空搜尋框，使用多 Unicode 智能偵測
@@ -511,6 +530,25 @@ class HanziComponentSearchTool:
         custom_item.setTarget_(self.filterMenuHandler)
         custom_item.setState_(NSOnState if self.use_custom_charset else NSOffState)
         menu.addItem_(custom_item)
+
+        # 參考字型資料夾（#26）：資訊列（無 action 自動禁用）＋開啟入口
+        menu.addItem_(NSMenuItem.separatorItem())
+        self._rescan_fonts_folder()
+        count = len(self._fonts_folder_snapshot)
+        if count > 0:
+            info_title = L("menu_ref_fonts_count").format(count=count)
+        else:
+            info_title = L("menu_ref_fonts_empty")
+        info_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            info_title, None, ""
+        )
+        menu.addItem_(info_item)
+
+        open_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            L("menu_open_ref_fonts_folder"), "openReferenceFontsFolder:", ""
+        )
+        open_item.setTarget_(self.filterMenuHandler)
+        menu.addItem_(open_item)
 
         # 在按鈕下方顯示選單
         button = sender.getNSButton()
@@ -831,8 +869,10 @@ class HanziComponentSearchTool:
         自動模式：使用 self.current_char（已由 on_glyph_changed 設定）
         手動模式：使用搜尋框內容
         """
-        # 新搜尋時清掉負向字型快取：若使用者期間安裝了含某 PUA 的字型，
+        # 新搜尋時：先偵測參考字型資料夾變動（有變即由 rescan 失效並重繪，#26），
+        # 再清負向快取——若使用者期間安裝了含某 PUA 的字型，
         # 讓該碼位重新解析以正確顯示（正向快取保留，不影響效能）。
+        self._rescan_fonts_folder()
         self._font_cache.forget_missing()
 
         input_text = self.w.inputText.get().strip()
@@ -1577,8 +1617,9 @@ class HanziComponentSearchTool:
     # === 預覽功能 ===
 
     def update_preview(self, char):
-        """更新字符預覽（水平垂直居中）"""
-        font = self.get_font_for_char(char)
+        """更新字符預覽（水平垂直居中），tooltip 顯示解析到的字型與來源"""
+        font, source = self.font_and_source_for_char(char)
+        self._set_preview_tooltip(font, source)
 
         # 垂直偏移量：負值向下移動，正值向上移動
         # 微調讓文字在 90px 高度區域內視覺居中
@@ -1600,84 +1641,83 @@ class HanziComponentSearchTool:
         )
         self.w.preview.set(preview_text)
 
+    def _set_preview_tooltip(self, font, source):
+        """預覽區 tooltip 顯示「顯示字型：名稱（來源）」，讓字型選擇可觀察（#26）。"""
+        try:
+            name = font.familyName() if font is not None else None
+            label = L("tooltip_display_font").format(
+                name=name or "?", source=L("font_source_" + source)
+            )
+            self.w.preview.getNSTextField().setToolTip_(label)
+        except Exception:
+            pass
+
     def get_font_for_char(self, char, size=72):
-        """
-        使用 macOS 原生 CTFontCreateForString 自動選擇字型
+        """回能顯示該字符的 NSFont（font_and_source_for_char 的字型部分）。"""
+        return self.font_and_source_for_char(char, size)[0]
 
-        讓系統自動從 cascade list 尋找能顯示該字符的字型，
-        無需硬編碼特定字型家族，支援不同區域使用者的系統字型。
+    def font_and_source_for_char(self, char, size=72):
+        """解析字型並附來源：(NSFont, 'folder'|'family'|'covering'|'cascade'|'system')。
 
-        參數:
-            char: 要顯示的字符
-            size: 字型大小（預設 72pt）
-
-        回傳:
-            NSFont: 能顯示該字符的字型
+        PUA 碼位不信任系統 cascade——任何字型對 PUA 的涵蓋都是各自為政，
+        cascade 會回「第一個涵蓋的已安裝字型」（#26：DIN 搶走造字顯示），
+        故直接走 _resolve_glyph_font 的明確優先序（資料夾→文件同名→已安裝掃描）。
+        其餘字元維持 CTFontCreateForString 自動選擇，無需硬編碼字型家族。
+        來源標記供預覽 tooltip 顯示「為什麼是這套字型」。
         """
         if not char:
-            return NSFont.systemFontOfSize_(size)
+            return (NSFont.systemFontOfSize_(size), "system")
 
-        # 查詢快取（鍵納入當前文件家族名：last_resort/PUA 解析依當前文件而定，
+        # 查詢快取（鍵納入當前文件家族名：PUA 解析依當前文件而定，
         # 否則切換文件時同碼位會誤命中前一文件的陳舊字型，見 #19 回歸）
         cache_key = font_cache_key(char, size, self._current_font_family())
         state, cached = self._font_cache.lookup(cache_key)
         if state == "hit":
             return cached
         if state == "missing":
-            # 已知系統無任何字型涵蓋此碼位 → 直接回系統字型，
+            # 已知無任何字型涵蓋此碼位 → 直接回系統字型，
             # 不再重跑全字型暴力掃描（負向快取，消除重繪卡頓，見健檢 #1）
-            return NSFont.systemFontOfSize_(size)
+            return (NSFont.systemFontOfSize_(size), "system")
 
         try:
-            # 建立基礎 CTFont（系統 UI 字型包含完整的 cascade list）
-            base_ct_font = CoreText.CTFontCreateWithName(
-                ".AppleSystemUIFont", size, None
-            )
-
-            # 使用 CTFontCreateForString 尋找能顯示該字符的字型
-            # range 以 UTF-16 計量：補充平面字（如補充平面 PUA）需 utf16_len，
-            # 用 Python len() 只會涵蓋前導代理 → last_resort 偵測失準
-            fallback_ct_font = CoreText.CTFontCreateForString(
-                base_ct_font, char, (0, utf16_len(char))
-            )
-
-            # 釋放 base_ct_font（不再需要，避免記憶體洩漏）
-            del base_ct_font
-
-            # 取得 fallback 字型的 PostScript 名稱
-            ps_name = CoreText.CTFontCopyPostScriptName(fallback_ct_font)
-
-            # 檢查是否為 LastResort 字型（表示系統找不到適合的字型）
-            is_last_resort = ps_name and "LastResort" in str(ps_name)
-
-            # 釋放 ps_name（不再需要）
-            del ps_name
-
-            if is_last_resort:
-                # 釋放 fallback_ct_font（不使用）
-                del fallback_ct_font
-                # PUA 造字等「系統 cascade 無法靠碼位 fallback」的字（如以 IDS 組出的
-                # U+E000）：先試開啟檔的同名字型，再掃所有已安裝字型找涵蓋此碼位者
-                # （只要系統裝了含該字的字型就顯示得出，不必是當前開啟的檔）。
-                installed = self._resolve_glyph_font(char, size)
-                if installed is None:
-                    # 系統無任何字型含此碼位 → 退系統字型（顯示為缺字框）並記住此鍵，
-                    # 避免每次重繪重跑暴力掃描；使用者安裝字型後由下次搜尋
-                    # forget_missing() 清掉負向項重試（見健檢 #1）。
-                    self._font_cache.store_missing(cache_key)
-                    return NSFont.systemFontOfSize_(size)
-                font = installed
+            if is_pua(ord(char[0])):
+                resolved = self._resolve_glyph_font(char, size)
             else:
-                # CTFont 和 NSFont 可透過 toll-free bridging 互轉
-                font = fallback_ct_font
+                resolved = self._cascade_font(char, size)
+                if resolved is None:
+                    # cascade 回 LastResort（如 CDP 區、罕見符號）→ 同走明確解析
+                    resolved = self._resolve_glyph_font(char, size)
 
-            # 快取結果（容量管理由 FontCache 內部處理）
-            self._font_cache.store(cache_key, font)
-            return font
+            if resolved is None:
+                # 無任何字型含此碼位 → 退系統字型（顯示為缺字框）並記住此鍵；
+                # 使用者安裝字型或更新參考資料夾後，由下次搜尋清掉負向項重試。
+                self._font_cache.store_missing(cache_key)
+                return (NSFont.systemFontOfSize_(size), "system")
+
+            # 快取 (font, source)（容量管理由 FontCache 內部處理）
+            self._font_cache.store(cache_key, resolved)
+            return resolved
 
         except Exception:
             # 發生錯誤時 fallback 到系統字型
-            return NSFont.systemFontOfSize_(size)
+            return (NSFont.systemFontOfSize_(size), "system")
+
+    def _cascade_font(self, char, size):
+        """CTFontCreateForString 走系統 cascade；LastResort 回 None。
+
+        range 以 UTF-16 計量：補充平面字需 utf16_len，用 Python len()
+        只會涵蓋前導代理 → LastResort 偵測失準。
+        """
+        # 基礎 CTFont 用系統 UI 字型（包含完整 cascade list）
+        base_ct_font = CoreText.CTFontCreateWithName(".AppleSystemUIFont", size, None)
+        fallback_ct_font = CoreText.CTFontCreateForString(
+            base_ct_font, char, (0, utf16_len(char))
+        )
+        ps_name = CoreText.CTFontCopyPostScriptName(fallback_ct_font)
+        if ps_name and "LastResort" in str(ps_name):
+            return None
+        # CTFont 和 NSFont 可透過 toll-free bridging 互轉
+        return (fallback_ct_font, "cascade")
 
     def _current_font_family(self):
         """目前開啟 Glyphs 文件的家族名；無文件、無名稱或取值失敗皆回 None。
@@ -1801,32 +1841,152 @@ class HanziComponentSearchTool:
         return None
 
     def _resolve_glyph_font(self, char, size):
-        """為缺字（LastResort）的字解析能顯示它的已安裝字型，找不到回 None。
+        """為 PUA／缺字解析字型，回 (font, source)，找不到回 None。
 
         順序（優先序判定見 hanzi_core.choose_glyph_font_source）：
-        1) 目前開啟的 Glyphs 檔同名安裝字型，且確認真的涵蓋此字 → 直接用（編輯中優先）
-        2) 掃所有已安裝字型取涵蓋此碼位者（與開哪個檔無關 → 安裝了就能顯示）
-        3) 都不涵蓋 → None（退系統字型、由負向快取記住待重試）。
+        1) 參考字型資料夾內涵蓋此碼位的字型 → 用它（使用者明確意圖，#26）
+        2) 目前開啟的 Glyphs 檔同名安裝字型，且確認真的涵蓋此字 → 用它（編輯中優先）
+        3) 掃所有已安裝字型取涵蓋此碼位者（與開哪個檔無關 → 安裝了就能顯示）
+        4) 都不涵蓋 → None（退系統字型、由負向快取記住待重試）。
            不退回不涵蓋的同名字型，否則只是另一種豆腐且會被當正向結果快取。
         """
         code_point = ord(char[0]) if char else None
         if code_point is None:
             return None
 
-        family_font = self._resolve_installed_font(size)
-        family_covers = family_font is not None and self._font_covers(
-            family_font, code_point
-        )
-        covering = (
-            None if family_covers else self._font_covering_codepoint(code_point, size)
-        )
+        folder_font = self._folder_font_covering(code_point, size)
 
-        choice = choose_glyph_font_source(family_covers, covering is not None)
+        family_font = None
+        family_covers = False
+        if folder_font is None:
+            family_font = self._resolve_installed_font(size)
+            family_covers = family_font is not None and self._font_covers(
+                family_font, code_point
+            )
+
+        covering = None
+        if folder_font is None and not family_covers:
+            covering = self._font_covering_codepoint(code_point, size)
+
+        choice = choose_glyph_font_source(
+            folder_font is not None, family_covers, covering is not None
+        )
+        if choice == "folder":
+            return (folder_font, "folder")
         if choice == "family":
-            return family_font
+            return (family_font, "family")
         if choice == "covering":
-            return covering
+            return (covering, "covering")
         return None
+
+    # === 參考字型資料夾（#26）===
+
+    def _resolve_fonts_folder_path(self):
+        """參考字型資料夾路徑；位於 Application Support 下，不隨外掛更新被清掉。
+
+        程序生命週期不變，__init__ 算一次存 self._fonts_folder。
+        """
+        try:
+            base = NSSearchPathForDirectoriesInDomains(
+                NSApplicationSupportDirectory, NSUserDomainMask, True
+            )[0]
+        except Exception:
+            return None
+        return os.path.join(base, "Glyphs 3", "HanziIDSComponentExplorer", "Fonts")
+
+    def _rescan_fonts_folder(self):
+        """比對資料夾快照，有變動即失效字型解析衍生狀態並重繪；回傳是否有變動。
+
+        熱更新機制：掛在視窗 became key、每次搜尋、開選單三個時點。使用者
+        重新匯出字型後切回視窗即生效，無需手動重掃、無需刪除重裝安裝版。
+        """
+        entries = []
+        if self._fonts_folder and os.path.isdir(self._fonts_folder):
+            try:
+                for entry in os.scandir(self._fonts_folder):
+                    # 先按檔名過濾再 stat，略過 .DS_Store 等非字型檔的 syscall
+                    if is_font_file_name(entry.name) and entry.is_file():
+                        entries.append((entry.name, entry.stat().st_mtime))
+            except OSError:
+                pass
+        snapshot = fonts_folder_snapshot(entries)
+        if snapshot == self._fonts_folder_snapshot:
+            return False
+        self._fonts_folder_snapshot = snapshot
+        # 資料夾變動會改變解析結果：字型 lazy 重載、快取全清（正向項可能指向
+        # 舊資料夾字型、負向項的碼位可能已被新字型涵蓋）、搜尋框字型 memo 失效，
+        # 然後重繪依字型解析的顯示區——失效與重繪集中於此，呼叫端無需串接
+        self._folder_fonts = None
+        self._font_cache.clear()
+        self._search_field_font_char = None
+        self._refresh_font_dependent_views()
+        return True
+
+    def _load_folder_fonts(self):
+        """從資料夾檔案載入 (descriptor, charset) 對，charset 於載入時預取一次。
+
+        以 CTFontManagerCreateFontDescriptorsFromURL 直接讀檔、不註冊進系統：
+        與同名已安裝字型不衝突（開發中不必先移除舊版），且每次資料夾變動
+        都重新讀檔，不受 macOS 字型快取影響。charset 與 size 無關，預取後
+        涵蓋判定不必逐次建字型。
+        """
+        fonts = []
+        for name, _mtime in self._fonts_folder_snapshot:
+            try:
+                url = NSURL.fileURLWithPath_(
+                    os.path.join(self._fonts_folder, name)
+                )
+                descriptors = (
+                    CoreText.CTFontManagerCreateFontDescriptorsFromURL(url) or []
+                )
+                for descriptor in descriptors:
+                    font = CoreText.CTFontCreateWithFontDescriptor(
+                        descriptor, 12, None
+                    )
+                    charset = (
+                        CoreText.CTFontCopyCharacterSet(font)
+                        if font is not None
+                        else None
+                    )
+                    if charset is not None:
+                        fonts.append((descriptor, charset))
+            except Exception:
+                continue
+        return fonts
+
+    def _folder_font_covering(self, code_point, size):
+        """回參考資料夾中第一個涵蓋該碼位的字型；資料夾空或都不涵蓋回 None。
+
+        涵蓋判定走預取的 charset，只對命中的 descriptor 以目標尺寸實體化，
+        避免 cache-miss 熱路徑上逐 descriptor 建字型。首次呼叫才載入（lazy），
+        外掛啟動不被字型檔 I/O 阻塞。
+        """
+        if self._folder_fonts is None:
+            self._folder_fonts = self._load_folder_fonts()
+        for descriptor, charset in self._folder_fonts:
+            try:
+                if not charset.longCharacterIsMember_(code_point):
+                    continue
+                font = CoreText.CTFontCreateWithFontDescriptor(
+                    descriptor, size, None
+                )
+            except Exception:
+                continue
+            if font is not None:
+                return font
+        return None
+
+    def open_reference_fonts_folder(self):
+        """建立（若不存在）並在 Finder 開啟參考字型資料夾（篩選選單入口）。"""
+        if not self._fonts_folder:
+            return
+        try:
+            os.makedirs(self._fonts_folder, exist_ok=True)
+            NSWorkspace.sharedWorkspace().openURL_(
+                NSURL.fileURLWithPath_(self._fonts_folder)
+            )
+        except Exception:
+            pass
 
     def _build_list_attributed_string(self, text, highlighted=False):
         """為中欄結果列表逐字挑字型，組 NSAttributedString。
@@ -1993,9 +2153,25 @@ class HanziComponentSearchTool:
         """
         視窗獲得焦點時的回調（Issue #31）
 
-        進入手動模式，暫停自動跟隨 Glyphs 選中字符
+        進入手動模式，暫停自動跟隨 Glyphs 選中字符。
+        同時偵測參考字型資料夾變動（#26）：重新匯出字型後切回視窗即重新解析。
         """
         self.is_manual_mode = True
+        self._rescan_fonts_folder()
+
+    def _refresh_font_dependent_views(self):
+        """字型快取失效後重繪依字型解析的顯示區（搜尋框、預覽、中欄列表、右欄相關字）。"""
+        if getattr(self, "w", None) is None:
+            return  # __init__ 首次掃描時視窗尚未建立
+        try:
+            self._update_search_field_font()
+            char = self._right_panel_char or self.current_char
+            if char:
+                self.update_preview(char)
+                self.update_related_display()
+            self.w.resultList.getNSTableView().setNeedsDisplay_(True)
+        except Exception:
+            pass
 
     def on_window_resigned_key(self, sender):
         """
