@@ -189,10 +189,17 @@ SelectionObserverHandler = type(
 class HanziComponentSearchTool:
     """Glyphs 外掛主視窗"""
 
-    # 字型快取（類別層級）：正向（鍵→NSFont）＋負向（已知無涵蓋字型）
+    # 字型快取（類別層級）：正向（鍵→(NSFont, source)）＋負向（已知無涵蓋字型）
     # 鍵為 font_cache_key(char, size, font_family)
     _CACHE_MAX_SIZE = 500  # 最大快取數量
     _font_cache = FontCache(_CACHE_MAX_SIZE)
+
+    # 參考字型資料夾狀態（#26）：與 _font_cache 同為類別層級——快取的失效
+    # 基準必須與快取同壽命，否則重開視窗會誤判變動（清掉跨實例快取）或
+    # 漏判「關窗期間資料夾被清空」（沿用已刪字型）。寫入一律走 type(self)。
+    _fonts_folder_snapshot = ()
+    _folder_fonts = None  # None＝待載入；載入後為 [(descriptor, charset), ...]
+    _folder_load_failures = 0  # 上次載入時無法產出任何字型的檔案數（供資訊列）
 
     def __init__(self, title=None):
         # === 初始化核心引擎 ===
@@ -227,10 +234,12 @@ class HanziComponentSearchTool:
         # 已命中、能涵蓋造字的字型家族名（加速後續同類造字、消除掃描延遲）
         self._covering_font_families = []
 
-        # 參考字型資料夾（#26）：快照供變動偵測、字型 lazy 載入供 PUA 最優先解析
+        # 參考字型資料夾（#26）：路徑跨實例恆定存實例即可；快照與字型為
+        # 類別屬性（見類別定義處）。init 掃描與既存類別快照比對——重開視窗
+        # 且資料夾未變時不清快取、關窗期間的變動（含清空）也偵測得到
         self._fonts_folder = self._resolve_fonts_folder_path()
-        self._fonts_folder_snapshot = ()
-        self._folder_fonts = None  # None＝待載入；載入後為 [(descriptor, charset), ...]
+        # 預覽區當前顯示的字（update_preview 記錄、熱更新重繪時重播）
+        self._preview_char = None
         self._rescan_fonts_folder()
 
         # 模式切換：自動模式 vs 手動模式
@@ -534,8 +543,16 @@ class HanziComponentSearchTool:
         # 參考字型資料夾（#26）：資訊列（無 action 自動禁用）＋開啟入口
         menu.addItem_(NSMenuItem.separatorItem())
         self._rescan_fonts_folder()
-        count = len(self._fonts_folder_snapshot)
-        if count > 0:
+        cls = type(self)
+        count = len(cls._fonts_folder_snapshot)
+        # 載入失敗數只在已實際載入後可知（lazy）；有失敗就標示，
+        # 避免資訊列替損壞檔背書「有讀到」
+        failures = cls._folder_load_failures if cls._folder_fonts is not None else 0
+        if count > 0 and failures > 0:
+            info_title = L("menu_ref_fonts_count_failed").format(
+                count=count, failed=failures
+            )
+        elif count > 0:
             info_title = L("menu_ref_fonts_count").format(count=count)
         else:
             info_title = L("menu_ref_fonts_empty")
@@ -869,11 +886,12 @@ class HanziComponentSearchTool:
         自動模式：使用 self.current_char（已由 on_glyph_changed 設定）
         手動模式：使用搜尋框內容
         """
-        # 新搜尋時：先偵測參考字型資料夾變動（有變即由 rescan 失效並重繪，#26），
-        # 再清負向快取——若使用者期間安裝了含某 PUA 的字型，
-        # 讓該碼位重新解析以正確顯示（正向快取保留，不影響效能）。
-        self._rescan_fonts_folder()
+        # 新搜尋時：先清負向快取（讓期間安裝的字型重試；forget_missing 不動
+        # 正向項），再偵測參考字型資料夾變動（有變即由 rescan 集中失效並重繪，
+        # #26）。順序不可反——rescan 內建重繪會對無涵蓋碼位寫入負向項，
+        # 隨後才 forget_missing 的話同一輪搜尋會重跑兩次全字型掃描。
         self._font_cache.forget_missing()
+        self._rescan_fonts_folder()
 
         input_text = self.w.inputText.get().strip()
 
@@ -1056,6 +1074,9 @@ class HanziComponentSearchTool:
         """清空左欄（預覽 + 詳資）；多部件模式無單一焦點字時使用。"""
         self.current_char = None
         self._right_panel_char = None
+        # 預覽已空：清掉重播記錄與 tooltip，避免熱更新把 stale 字畫回空白預覽
+        self._preview_char = None
+        self._set_preview_tooltip(None, None)
         self.w.preview.set("")
         self.w.content.set("")
         self.w.idsSwitcher.show(False)
@@ -1617,7 +1638,12 @@ class HanziComponentSearchTool:
     # === 預覽功能 ===
 
     def update_preview(self, char):
-        """更新字符預覽（水平垂直居中），tooltip 顯示解析到的字型與來源"""
+        """更新字符預覽（水平垂直居中），tooltip 顯示解析到的字型與來源。
+
+        記下當前顯示字供熱更新重播——預覽不跟隨右欄 sticky，重繪時
+        不可用 _right_panel_char 重新推導（會產生換字副作用）。
+        """
+        self._preview_char = char
         font, source = self.font_and_source_for_char(char)
         self._set_preview_tooltip(font, source)
 
@@ -1642,12 +1668,25 @@ class HanziComponentSearchTool:
         self.w.preview.set(preview_text)
 
     def _set_preview_tooltip(self, font, source):
-        """預覽區 tooltip 顯示「顯示字型：名稱（來源）」，讓字型選擇可觀察（#26）。"""
+        """預覽區 tooltip 顯示「顯示字型：名稱（來源）」，讓字型選擇可觀察（#26）。
+
+        font 為 None 或組字失敗時清空 tooltip，避免殘留上一字的來源資訊；
+        'system' 來源代表無字型涵蓋（缺字框），直說狀態而非洩漏
+        .AppleSystemUIFont 私有名。
+        """
+        label = None
         try:
-            name = font.familyName() if font is not None else None
-            label = L("tooltip_display_font").format(
-                name=name or "?", source=L("font_source_" + source)
-            )
+            if font is not None:
+                if source == "system":
+                    label = L("tooltip_font_missing")
+                else:
+                    label = L("tooltip_display_font").format(
+                        name=font.familyName() or "?",
+                        source=L("font_source_" + source),
+                    )
+        except Exception:
+            label = None
+        try:
             self.w.preview.getNSTextField().setToolTip_(label)
         except Exception:
             pass
@@ -1661,9 +1700,13 @@ class HanziComponentSearchTool:
 
         PUA 碼位不信任系統 cascade——任何字型對 PUA 的涵蓋都是各自為政，
         cascade 會回「第一個涵蓋的已安裝字型」（#26：DIN 搶走造字顯示），
-        故直接走 _resolve_glyph_font 的明確優先序（資料夾→文件同名→已安裝掃描）。
+        故先走 _resolve_glyph_font 的明確優先序（資料夾→文件同名→已安裝掃描），
+        三層全滅才以 cascade 收尾（隱藏系統字型如 .SFNS 只有 cascade 找得到；
+        可見字型已在掃描層被攔，不會回到 cascade 任選的 #26 問題）。
         其餘字元維持 CTFontCreateForString 自動選擇，無需硬編碼字型家族。
         來源標記供預覽 tooltip 顯示「為什麼是這套字型」。
+        char 預期為單一字元（上游 glyph_font_runs／field_display_char 已逐字
+        切分）；多字字串僅以首碼位分流。
         """
         if not char:
             return (NSFont.systemFontOfSize_(size), "system")
@@ -1682,6 +1725,8 @@ class HanziComponentSearchTool:
         try:
             if is_pua(ord(char[0])):
                 resolved = self._resolve_glyph_font(char, size)
+                if resolved is None:
+                    resolved = self._cascade_font(char, size)
             else:
                 resolved = self._cascade_font(char, size)
                 if resolved is None:
@@ -1758,13 +1803,26 @@ class HanziComponentSearchTool:
         except Exception:
             return None
 
+    @staticmethod
+    def _charset_covers(charset, code_point):
+        """charset 是否涵蓋該碼位（支援補充平面）；None 視為不涵蓋。
+
+        涵蓋語意的唯一謂詞——_font_covers 與 _folder_font_covering 共用，
+        避免 folder 與 installed 兩個 tier 對同一碼位給出不同結論。
+        """
+        try:
+            return charset is not None and bool(
+                charset.longCharacterIsMember_(code_point)
+            )
+        except Exception:
+            return False
+
     def _font_covers(self, ns_font, code_point):
         """以字型的 character set 判定是否涵蓋該碼位（支援補充平面）。"""
         try:
-            char_set = CoreText.CTFontCopyCharacterSet(ns_font)
-            if char_set is None:
-                return False
-            return bool(char_set.longCharacterIsMember_(code_point))
+            return self._charset_covers(
+                CoreText.CTFontCopyCharacterSet(ns_font), code_point
+            )
         except Exception:
             return False
 
@@ -1871,13 +1929,14 @@ class HanziComponentSearchTool:
         choice = choose_glyph_font_source(
             folder_font is not None, family_covers, covering is not None
         )
-        if choice == "folder":
-            return (folder_font, "folder")
-        if choice == "family":
-            return (family_font, "family")
-        if choice == "covering":
-            return (covering, "covering")
-        return None
+        if choice is None:
+            return None
+        candidates = {
+            "folder": folder_font,
+            "family": family_font,
+            "covering": covering,
+        }
+        return (candidates[choice], choice)
 
     # === 參考字型資料夾（#26）===
 
@@ -1895,32 +1954,43 @@ class HanziComponentSearchTool:
         return os.path.join(base, "Glyphs 3", "HanziIDSComponentExplorer", "Fonts")
 
     def _rescan_fonts_folder(self):
-        """比對資料夾快照，有變動即失效字型解析衍生狀態並重繪；回傳是否有變動。
+        """比對資料夾快照，有變動即失效字型解析衍生狀態並重繪。
 
         熱更新機制：掛在視窗 became key、每次搜尋、開選單三個時點。使用者
         重新匯出字型後切回視窗即生效，無需手動重掃、無需刪除重裝安裝版。
+        快照為類別層級——與 _font_cache 同壽命，重開視窗不誤判變動，
+        關窗期間的資料夾變動（含清空）也偵測得到。
         """
+        cls = type(self)
         entries = []
         if self._fonts_folder and os.path.isdir(self._fonts_folder):
             try:
-                for entry in os.scandir(self._fonts_folder):
-                    # 先按檔名過濾再 stat，略過 .DS_Store 等非字型檔的 syscall
-                    if is_font_file_name(entry.name) and entry.is_file():
-                        entries.append((entry.name, entry.stat().st_mtime))
+                with os.scandir(self._fonts_folder) as it:
+                    for entry in it:
+                        # 先按檔名過濾再 stat，略過 .DS_Store 等非字型檔的 syscall
+                        if not is_font_file_name(entry.name):
+                            continue
+                        try:
+                            if entry.is_file():
+                                st = entry.stat()
+                                entries.append(
+                                    (entry.name, (st.st_mtime_ns, st.st_size))
+                                )
+                        except OSError:
+                            continue  # scandir 與 stat 之間檔案消失：略過該檔
             except OSError:
-                pass
+                return  # 目錄整體不可讀：保留前一快照，不以殘缺列舉誤判變動
         snapshot = fonts_folder_snapshot(entries)
-        if snapshot == self._fonts_folder_snapshot:
-            return False
-        self._fonts_folder_snapshot = snapshot
+        if snapshot == cls._fonts_folder_snapshot:
+            return
+        cls._fonts_folder_snapshot = snapshot
         # 資料夾變動會改變解析結果：字型 lazy 重載、快取全清（正向項可能指向
         # 舊資料夾字型、負向項的碼位可能已被新字型涵蓋）、搜尋框字型 memo 失效，
         # 然後重繪依字型解析的顯示區——失效與重繪集中於此，呼叫端無需串接
-        self._folder_fonts = None
+        cls._folder_fonts = None
         self._font_cache.clear()
         self._search_field_font_char = None
         self._refresh_font_dependent_views()
-        return True
 
     def _load_folder_fonts(self):
         """從資料夾檔案載入 (descriptor, charset) 對，charset 於載入時預取一次。
@@ -1928,10 +1998,14 @@ class HanziComponentSearchTool:
         以 CTFontManagerCreateFontDescriptorsFromURL 直接讀檔、不註冊進系統：
         與同名已安裝字型不衝突（開發中不必先移除舊版），且每次資料夾變動
         都重新讀檔，不受 macOS 字型快取影響。charset 與 size 無關，預取後
-        涵蓋判定不必逐次建字型。
+        涵蓋判定不必逐次建字型。無法產出任何字型的檔案計入
+        _folder_load_failures 供選單資訊列顯示（損壞檔不再靜默消失）。
         """
+        cls = type(self)
         fonts = []
-        for name, _mtime in self._fonts_folder_snapshot:
+        failures = 0
+        for name, _meta in cls._fonts_folder_snapshot:
+            loaded_any = False
             try:
                 url = NSURL.fileURLWithPath_(
                     os.path.join(self._fonts_folder, name)
@@ -1950,8 +2024,12 @@ class HanziComponentSearchTool:
                     )
                     if charset is not None:
                         fonts.append((descriptor, charset))
+                        loaded_any = True
             except Exception:
-                continue
+                pass
+            if not loaded_any:
+                failures += 1
+        cls._folder_load_failures = failures
         return fonts
 
     def _folder_font_covering(self, code_point, size):
@@ -1961,12 +2039,13 @@ class HanziComponentSearchTool:
         避免 cache-miss 熱路徑上逐 descriptor 建字型。首次呼叫才載入（lazy），
         外掛啟動不被字型檔 I/O 阻塞。
         """
-        if self._folder_fonts is None:
-            self._folder_fonts = self._load_folder_fonts()
-        for descriptor, charset in self._folder_fonts:
+        cls = type(self)
+        if cls._folder_fonts is None:
+            cls._folder_fonts = self._load_folder_fonts()
+        for descriptor, charset in cls._folder_fonts:
+            if not self._charset_covers(charset, code_point):
+                continue
             try:
-                if not charset.longCharacterIsMember_(code_point):
-                    continue
                 font = CoreText.CTFontCreateWithFontDescriptor(
                     descriptor, size, None
                 )
@@ -2160,15 +2239,46 @@ class HanziComponentSearchTool:
         self._rescan_fonts_folder()
 
     def _refresh_font_dependent_views(self):
-        """字型快取失效後重繪依字型解析的顯示區（搜尋框、預覽、中欄列表、右欄相關字）。"""
+        """字型快取失效後重繪依字型解析的顯示區（搜尋框、預覽、左欄詳資、
+        右欄相關字、中欄列表）。
+
+        各步驟獨立防護：任一區重繪失敗不牽連其餘（整包吞錯會讓熱更新
+        半途而廢且無從察覺是哪一段死掉）。
+        """
         if getattr(self, "w", None) is None:
             return  # __init__ 首次掃描時視窗尚未建立
         try:
             self._update_search_field_font()
-            char = self._right_panel_char or self.current_char
-            if char:
-                self.update_preview(char)
-                self.update_related_display()
+        except Exception:
+            pass
+        try:
+            # 預覽以 update_preview 記錄的當前顯示字重播（不重新推導，
+            # 避免 sticky 造成換字副作用）
+            if self._preview_char:
+                self.update_preview(self._preview_char)
+        except Exception:
+            pass
+        try:
+            # 左欄 textStorage 字型屬性一次性烙入、不會 draw-time 重解析：
+            # 以自身純文字重放（兩條寫入路徑簽名相同，字串即完整狀態）
+            text_view = self.w.content.getNSTextView()
+            text = str(text_view.textStorage().string())
+            if text:
+                text_view.textStorage().setAttributedString_(
+                    self.create_attributed_string(text, CONTENT_FONT_SIZE)
+                )
+        except Exception:
+            pass
+        try:
+            # 右欄重設 textStorage 會清掉使用者選取（連動禁用插入鈕）；
+            # 內容相同、只換字型，先存後還原選取範圍
+            text_view = self.w.relatedChars.getNSTextView()
+            selected = text_view.selectedRanges()
+            self.update_related_display()
+            text_view.setSelectedRanges_(selected)
+        except Exception:
+            pass
+        try:
             self.w.resultList.getNSTableView().setNeedsDisplay_(True)
         except Exception:
             pass

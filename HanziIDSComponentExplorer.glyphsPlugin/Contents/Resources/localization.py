@@ -10,6 +10,9 @@ Hanzi Component Explorer - 本地化字串模組
 
 from __future__ import division, print_function, unicode_literals
 
+# 支援語言（tests/test_font_source_strings.py 以此驗證所有字串鍵語言齊備）
+LANGUAGES = ("en", "zh-Hant", "zh-Hans", "ja")
+
 # 本地化字串字典
 STRINGS = {
     # 視窗與標題
@@ -143,10 +146,16 @@ STRINGS = {
         "ja": "参照フォント：なし",
     },
     "menu_ref_fonts_count": {
-        "en": "Reference Fonts: {count}",
+        "en": "Reference Fonts: {count} file(s)",
         "zh-Hant": "參考字型：{count} 個檔案",
         "zh-Hans": "参考字体：{count} 个文件",
         "ja": "参照フォント：{count} 個",
+    },
+    "menu_ref_fonts_count_failed": {
+        "en": "Reference Fonts: {count} file(s), {failed} failed to load",
+        "zh-Hant": "參考字型：{count} 個檔案（{failed} 個載入失敗）",
+        "zh-Hans": "参考字体：{count} 个文件（{failed} 个加载失败）",
+        "ja": "参照フォント：{count} 個（{failed} 個読み込み失敗）",
     },
     "menu_open_ref_fonts_folder": {
         "en": "Open Reference Fonts Folder...",
@@ -159,6 +168,12 @@ STRINGS = {
         "zh-Hant": "顯示字型：{name}（{source}）",
         "zh-Hans": "显示字体：{name}（{source}）",
         "ja": "表示フォント：{name}（{source}）",
+    },
+    "tooltip_font_missing": {
+        "en": "No installed or reference font covers this character",
+        "zh-Hant": "無已安裝或參考字型涵蓋此字",
+        "zh-Hans": "无已安装或参考字体涵盖此字",
+        "ja": "この文字を含むフォントがありません",
     },
     "font_source_folder": {
         "en": "reference folder",

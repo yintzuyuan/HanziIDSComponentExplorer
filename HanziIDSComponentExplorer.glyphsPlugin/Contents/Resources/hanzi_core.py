@@ -200,6 +200,13 @@ def choose_glyph_font_source(
     return None
 
 
+# font_and_source_for_char（UI 層）來源標記的 canonical 字彙：前三項由
+# choose_glyph_font_source 決定，'cascade'/'system' 由 UI 層 fallback 賦予。
+# 新增 tier 必須同步 localization 的 font_source_* 鍵
+#（tests/test_font_source_strings.py 鎖定對應）。
+FONT_SOURCES = ("folder", "family", "covering", "cascade", "system")
+
+
 def is_pua(code_point: int) -> bool:
     """碼位是否屬於私有使用區（BMP E000–F8FF、Plane 15/16，不含 noncharacter 尾端）。
 
@@ -226,21 +233,23 @@ def is_font_file_name(name: str) -> bool:
 
 
 def fonts_folder_snapshot(entries) -> Tuple:
-    """參考字型資料夾內容快照：(檔名, mtime) 序列 → 排序後 tuple。
+    """參考字型資料夾內容快照：(檔名, meta) 序列 → 排序後 tuple。
 
     熱更新判定依據：前後快照不相等即資料夾有變動（新增/移除/重新匯出），
-    上層據此清字型快取重新解析。只納入字型檔、忽略隱藏檔；排序使結果
-    與 os.scandir 的不定順序無關。
+    上層據此清字型快取重新解析。meta 為可排序、可比較的檔案識別——UI 層傳
+    (st_mtime_ns, st_size)，兩維並用可偵測 mtime 保留式覆蓋（cp -p、同步工具）。
+    只納入字型檔、忽略隱藏檔；排序使結果與 os.scandir 的不定順序無關。
     """
     return tuple(
         sorted(
-            (name, mtime) for name, mtime in entries if is_font_file_name(name)
+            (name, meta) for name, meta in entries if is_font_file_name(name)
         )
     )
 
 
 class FontCache:
-    """get_font_for_char 的字型快取：正向（鍵→字型）與負向（鍵→已知無涵蓋字型）。
+    """字型解析快取：正向（鍵→不透明 value，UI 層目前存 (font, source) tuple）
+    與負向（鍵→已知無涵蓋字型）。
 
     負向快取是效能關鍵：某 PUA 碼位無任何已安裝字型涵蓋時，若不記住，中欄 cell
     每次重繪都會重跑全字型暴力掃描造成捲動卡頓。負向項視為暫時性（使用者可能稍後

@@ -52,6 +52,12 @@ class TestFontsFolderSnapshot:
         after = fonts_folder_snapshot([("a.otf", 2.0)])
         assert before != after
 
+    def test_meta_tuple_size_change_changes_snapshot(self):
+        # UI 層傳 (st_mtime_ns, st_size)：mtime 保留式覆蓋（cp -p）靠 size 維度偵測
+        before = fonts_folder_snapshot([("a.otf", (100, 2048))])
+        after = fonts_folder_snapshot([("a.otf", (100, 4096))])
+        assert before != after
+
     def test_added_file_changes_snapshot(self):
         before = fonts_folder_snapshot([("a.otf", 1.0)])
         after = fonts_folder_snapshot([("a.otf", 1.0), ("b.otf", 1.0)])

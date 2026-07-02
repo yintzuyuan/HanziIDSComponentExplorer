@@ -3,8 +3,10 @@
 """字型來源字彙 ↔ localization 鍵護欄（#26）。
 
 font_and_source_for_char 的來源標記以 "font_source_" + source 組 localization
-鍵；缺鍵時 L() 靜默退回鍵名字面（tooltip 會顯示 font_source_xxx）。此測試
-鎖住每個來源都有對應字串鍵、且四種語言齊備——新增 tier 時忘加字串會在此爆。
+鍵；缺鍵時 L() 靜默退回鍵名字面（tooltip 會顯示 font_source_xxx）。來源字彙
+的 canonical 清單在 hanzi_core.FONT_SOURCES、語言清單在 localization.LANGUAGES
+——兩端皆 import 而非手抄，新增 tier 或語言時護欄自動擴及。
+語言齊備檢查涵蓋「全部」字串鍵，不只 font_source_*（invariant 是全域的）。
 """
 
 import sys
@@ -18,11 +20,8 @@ PLUGIN_RESOURCES = (
 )
 sys.path.insert(0, str(PLUGIN_RESOURCES))
 
-from localization import STRINGS  # noqa: E402
-
-# font_and_source_for_char（glyphs_ui.py）回傳的全部來源標記
-FONT_SOURCES = ("folder", "family", "covering", "cascade", "system")
-LANGUAGES = ("en", "zh-Hant", "zh-Hans", "ja")
+from hanzi_core import FONT_SOURCES  # noqa: E402
+from localization import LANGUAGES, STRINGS  # noqa: E402
 
 
 class TestFontSourceStrings:
@@ -30,8 +29,9 @@ class TestFontSourceStrings:
         for source in FONT_SOURCES:
             assert "font_source_" + source in STRINGS, source
 
-    def test_every_source_string_covers_all_languages(self):
-        for source in FONT_SOURCES:
-            entry = STRINGS["font_source_" + source]
+
+class TestAllStringsCoverAllLanguages:
+    def test_every_key_covers_every_language(self):
+        for key, entry in STRINGS.items():
             for lang in LANGUAGES:
-                assert entry.get(lang), (source, lang)
+                assert entry.get(lang), (key, lang)
