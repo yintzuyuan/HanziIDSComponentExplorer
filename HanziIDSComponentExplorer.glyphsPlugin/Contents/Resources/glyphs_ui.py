@@ -54,6 +54,7 @@ from hanzi_core import (
     choose_glyph_font_source,
     fonts_folder_snapshot,
     is_font_file_name,
+    is_private_font_name,
     is_pua,
     utf16_len,
 )
@@ -1672,7 +1673,8 @@ class HanziComponentSearchTool:
 
         font 為 None 或組字失敗時清空 tooltip，避免殘留上一字的來源資訊；
         'system' 來源代表無字型涵蓋（缺字框），直說狀態而非洩漏
-        .AppleSystemUIFont 私有名。
+        .AppleSystemUIFont 私有名。cascade 命中隱藏系統字型（.SFNS 等）時
+        同樣以通用名代替、不洩漏私有名。
         """
         label = None
         try:
@@ -1680,8 +1682,11 @@ class HanziComponentSearchTool:
                 if source == "system":
                     label = L("tooltip_font_missing")
                 else:
+                    name = font.familyName() or "?"
+                    if is_private_font_name(name):
+                        name = L("font_source_system")
                     label = L("tooltip_display_font").format(
-                        name=font.familyName() or "?",
+                        name=name,
                         source=L("font_source_" + source),
                     )
         except Exception:
@@ -2065,7 +2070,11 @@ class HanziComponentSearchTool:
                 NSURL.fileURLWithPath_(self._fonts_folder)
             )
         except Exception:
-            pass
+            # 靜默 no-op 會讓「開啟資料夾」點了沒反應且無從診斷（如路徑被
+            # 非目錄檔佔用）；印出 traceback 至 Glyphs 巨集面板
+            import traceback
+
+            print(traceback.format_exc())
 
     def _build_list_attributed_string(self, text, highlighted=False):
         """為中欄結果列表逐字挑字型，組 NSAttributedString。
@@ -2270,11 +2279,18 @@ class HanziComponentSearchTool:
         except Exception:
             pass
         try:
-            # 右欄重設 textStorage 會清掉使用者選取（連動禁用插入鈕）；
-            # 內容相同、只換字型，先存後還原選取範圍
+            # 右欄與左欄同理：textStorage 字型屬性一次性烙入，以自身純文字重放
+            # 即可換上新字型（內容不變、含多部件交集右欄——先前漏放導致交集殘留
+            # 舊字型）。重設 textStorage 會清掉使用者選取（連動禁用插入鈕），先存後還原
             text_view = self.w.relatedChars.getNSTextView()
             selected = text_view.selectedRanges()
-            self.update_related_display()
+            text = str(text_view.textStorage().string())
+            if text:
+                text_view.textStorage().setAttributedString_(
+                    self.create_attributed_string(
+                        text, RELATED_CHARS_FONT_SIZE, use_enhanced_spacing=True
+                    )
+                )
             text_view.setSelectedRanges_(selected)
         except Exception:
             pass

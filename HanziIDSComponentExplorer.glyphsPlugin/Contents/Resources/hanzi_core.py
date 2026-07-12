@@ -232,6 +232,15 @@ def is_font_file_name(name: str) -> bool:
     return not name.startswith(".") and name.lower().endswith(FONT_FILE_EXTENSIONS)
 
 
+def is_private_font_name(name: Optional[str]) -> bool:
+    """字型家族名是否為系統私有名（以 '.' 開頭，如 .AppleSystemUIFont、.SF NS）。
+
+    這類名字是 Apple 內部字型、只有系統 cascade 找得到、不應洩漏給使用者。
+    預覽 tooltip 在 cascade 命中隱藏系統字型時以此改用通用名（#26）。
+    """
+    return bool(name) and name.startswith(".")
+
+
 def fonts_folder_snapshot(entries) -> Tuple:
     """參考字型資料夾內容快照：(檔名, meta) 序列 → 排序後 tuple。
 
