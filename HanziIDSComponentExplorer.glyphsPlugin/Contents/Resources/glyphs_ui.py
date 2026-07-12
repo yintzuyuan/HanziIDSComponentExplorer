@@ -581,8 +581,8 @@ class HanziComponentSearchTool:
         self.use_custom_charset = False
         self.settings.remove("customCharsetPath")  # 清除儲存的自訂字集路徑
         self.loadFontCharset()
-        # 更新相關顯示
-        self.update_related_display()
+        # 更新相關顯示（多部件模式重繪交集——字集變動影響交集內容）
+        self._refresh_related_column()
 
     def selectCustomCharset(self):
         """選擇自訂字集檔案"""
@@ -601,8 +601,8 @@ class HanziComponentSearchTool:
             # 保存設定
             self.settings.set("customCharsetPath", path)
 
-            # 更新相關顯示
-            self.update_related_display()
+            # 更新相關顯示（多部件模式重繪交集——字集變動影響交集內容）
+            self._refresh_related_column()
 
     def loadCustomCharset(self, path):
         """載入自訂字集檔案"""
@@ -1537,6 +1537,19 @@ class HanziComponentSearchTool:
         except Exception:
             pass
 
+    def _refresh_related_column(self):
+        """右欄「依當前狀態重繪」的單一入口：字集切換與筆畫篩選等內容變動共用。
+
+        多部件模式重算 AND 交集（_render_intersection 依 currentCharset／筆畫
+        重算、無單一焦點字，裸 update_related_display 會因無焦點字而 no-op）；
+        否則重算 sticky/current 焦點字的相關字。集中一處避免各 callback 手抄
+        mode 分派而漂移。字型熱更新不經此處——內容不變、走 textStorage 重放。
+        """
+        if self.multi_component_mode:
+            self._render_intersection(self.multi_component_parts)
+        else:
+            self.update_related_display()
+
     def on_stroke_filter_changed(self, sender):
         """筆畫篩選滑桿 callback：四捨五入到最近的 tick"""
         new_tick = int(round(sender.get()))
@@ -1548,10 +1561,7 @@ class HanziComponentSearchTool:
         self.stroke_filter_tick = new_tick
         self.settings.set("strokeFilterTick", new_tick)
         self._refresh_stroke_filter_display()
-        if self.multi_component_mode:
-            self._render_intersection(self.multi_component_parts)
-        else:
-            self.update_related_display()
+        self._refresh_related_column()
 
     def _apply_chars_filters(self, chars, display_char, related_chars, stroke_max_diff):
         """套用 related_chars 排除 + 顏色 + 筆畫 三道篩選、回篩後 list（保持原順序）。"""
