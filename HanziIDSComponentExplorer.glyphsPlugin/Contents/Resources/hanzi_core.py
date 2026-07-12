@@ -108,15 +108,6 @@ def resolve_display_char(
     return sticky or current
 
 
-def _is_pua(code_point: int) -> bool:
-    """是否為 Private Use Area 碼位（BMP PUA 與兩個補充平面 PUA）。"""
-    return (
-        0xE000 <= code_point <= 0xF8FF
-        or 0xF0000 <= code_point <= 0xFFFFD
-        or 0x100000 <= code_point <= 0x10FFFD
-    )
-
-
 def field_display_char(text: Optional[str]) -> Optional[str]:
     """決定搜尋框（NSSearchField）該以哪個字的字型渲染，無則回 None（用系統字型）。
 
@@ -134,7 +125,7 @@ def field_display_char(text: Optional[str]) -> Optional[str]:
     if not stripped:
         return None
     for ch in stripped:
-        if _is_pua(ord(ch)):
+        if is_pua(ord(ch)):
             return ch
     if all(ord(ch) > 127 for ch in stripped):
         return stripped[0]
@@ -188,17 +179,20 @@ def utf16_len(text: str) -> int:
 
 
 def choose_glyph_font_source(
-    family_covers: bool, covering_found: bool
+    folder_covers: bool, family_covers: bool, covering_found: bool
 ) -> Optional[str]:
-    """PUA 缺字字型解析的優先序：回 'family' / 'covering' / None。
+    """PUA 缺字字型解析的優先序：回 'folder' / 'family' / 'covering' / None。
 
-    1) 當前文件同名安裝字型確實涵蓋 → 'family'（編輯中優先）；
-    2) 否則有其他已安裝字型涵蓋 → 'covering'；
-    3) 都沒有 → None（退系統字型、由負向快取記住待重試）。
+    1) 參考字型資料夾內有字型涵蓋 → 'folder'（使用者明確放入的覆蓋意圖，最優先）；
+    2) 當前文件同名安裝字型確實涵蓋 → 'family'（編輯中優先）；
+    3) 否則有其他已安裝字型涵蓋 → 'covering'；
+    4) 都沒有 → None（退系統字型、由負向快取記住待重試）。
 
-    第 3 步必為 None，不可退回「已確認不涵蓋」的同名字型——否則上層會把它當正向
+    末步必為 None，不可退回「已確認不涵蓋」的同名字型——否則上層會把它當正向
     結果快取（sticky 豆腐、forget_missing 清不掉）。見 [[FontCache]] 負向快取設計。
     """
+    if folder_covers:
+        return "folder"
     if family_covers:
         return "family"
     if covering_found:
@@ -206,8 +200,65 @@ def choose_glyph_font_source(
     return None
 
 
+# font_and_source_for_char（UI 層）來源標記的 canonical 字彙：前三項由
+# choose_glyph_font_source 決定，'cascade'/'system' 由 UI 層 fallback 賦予。
+# 新增 tier 必須同步 localization 的 font_source_* 鍵
+#（tests/test_font_source_strings.py 鎖定對應）。
+FONT_SOURCES = ("folder", "family", "covering", "cascade", "system")
+
+
+def is_pua(code_point: int) -> bool:
+    """碼位是否屬於私有使用區（BMP E000–F8FF、Plane 15/16，不含 noncharacter 尾端）。
+
+    PUA 的字型涵蓋各自為政、系統 cascade 的挑選本質上任意（#26：DIN 搶走造字顯示），
+    get_font_for_char 以此分流：PUA 跳過 CTFontCreateForString，直接走明確優先序解析。
+    """
+    return (
+        0xE000 <= code_point <= 0xF8FF
+        or 0xF0000 <= code_point <= 0xFFFFD
+        or 0x100000 <= code_point <= 0x10FFFD
+    )
+
+
+FONT_FILE_EXTENSIONS = (".otf", ".ttf", ".ttc", ".otc")
+
+
+def is_font_file_name(name: str) -> bool:
+    """檔名是否為應納入參考字型資料夾的字型檔（忽略隱藏檔、副檔名不分大小寫）。
+
+    供 fonts_folder_snapshot 與 UI 層的 scandir 迴圈共用——後者在 stat 前
+    先以此過濾，略過 .DS_Store 等非字型檔的 syscall。
+    """
+    return not name.startswith(".") and name.lower().endswith(FONT_FILE_EXTENSIONS)
+
+
+def is_private_font_name(name: Optional[str]) -> bool:
+    """字型家族名是否為系統私有名（以 '.' 開頭，如 .AppleSystemUIFont、.SF NS）。
+
+    這類名字是 Apple 內部字型、只有系統 cascade 找得到、不應洩漏給使用者。
+    預覽 tooltip 在 cascade 命中隱藏系統字型時以此改用通用名（#26）。
+    """
+    return bool(name) and name.startswith(".")
+
+
+def fonts_folder_snapshot(entries) -> Tuple:
+    """參考字型資料夾內容快照：(檔名, meta) 序列 → 排序後 tuple。
+
+    熱更新判定依據：前後快照不相等即資料夾有變動（新增/移除/重新匯出），
+    上層據此清字型快取重新解析。meta 為可排序、可比較的檔案識別——UI 層傳
+    (st_mtime_ns, st_size)，兩維並用可偵測 mtime 保留式覆蓋（cp -p、同步工具）。
+    只納入字型檔、忽略隱藏檔；排序使結果與 os.scandir 的不定順序無關。
+    """
+    return tuple(
+        sorted(
+            (name, meta) for name, meta in entries if is_font_file_name(name)
+        )
+    )
+
+
 class FontCache:
-    """get_font_for_char 的字型快取：正向（鍵→字型）與負向（鍵→已知無涵蓋字型）。
+    """字型解析快取：正向（鍵→不透明 value，UI 層目前存 (font, source) tuple）
+    與負向（鍵→已知無涵蓋字型）。
 
     負向快取是效能關鍵：某 PUA 碼位無任何已安裝字型涵蓋時，若不記住，中欄 cell
     每次重繪都會重跑全字型暴力掃描造成捲動卡頓。負向項視為暫時性（使用者可能稍後

@@ -10,6 +10,9 @@ Hanzi Component Explorer - 本地化字串模組
 
 from __future__ import division, print_function, unicode_literals
 
+# 支援語言（tests/test_font_source_strings.py 以此驗證所有字串鍵語言齊備）
+LANGUAGES = ("en", "zh-Hant", "zh-Hans", "ja")
+
 # 本地化字串字典
 STRINGS = {
     # 視窗與標題
@@ -134,6 +137,73 @@ STRINGS = {
         "zh-Hant": "依與當前字的筆畫差篩選相關字",
         "zh-Hans": "依与当前字的笔画差筛选相关字",
         "ja": "現在の字との画数差で関連字をフィルター",
+    },
+    # 參考字型資料夾（#26）
+    "menu_ref_fonts_empty": {
+        "en": "Reference Fonts: None",
+        "zh-Hant": "參考字型：無",
+        "zh-Hans": "参考字体：无",
+        "ja": "参照フォント：なし",
+    },
+    "menu_ref_fonts_count": {
+        "en": "Reference Fonts: {count} file(s)",
+        "zh-Hant": "參考字型：{count} 個檔案",
+        "zh-Hans": "参考字体：{count} 个文件",
+        "ja": "参照フォント：{count} 個",
+    },
+    "menu_ref_fonts_count_failed": {
+        "en": "Reference Fonts: {count} file(s), {failed} failed to load",
+        "zh-Hant": "參考字型：{count} 個檔案（{failed} 個載入失敗）",
+        "zh-Hans": "参考字体：{count} 个文件（{failed} 个加载失败）",
+        "ja": "参照フォント：{count} 個（{failed} 個読み込み失敗）",
+    },
+    "menu_open_ref_fonts_folder": {
+        "en": "Open Reference Fonts Folder...",
+        "zh-Hant": "開啟參考字型資料夾...",
+        "zh-Hans": "打开参考字体文件夹...",
+        "ja": "参照フォントフォルダを開く...",
+    },
+    "tooltip_display_font": {
+        "en": "Display font: {name} ({source})",
+        "zh-Hant": "顯示字型：{name}（{source}）",
+        "zh-Hans": "显示字体：{name}（{source}）",
+        "ja": "表示フォント：{name}（{source}）",
+    },
+    "tooltip_font_missing": {
+        "en": "No installed or reference font covers this character",
+        "zh-Hant": "無已安裝或參考字型涵蓋此字",
+        "zh-Hans": "无已安装或参考字体涵盖此字",
+        "ja": "この文字を含むフォントがありません",
+    },
+    "font_source_folder": {
+        "en": "reference folder",
+        "zh-Hant": "參考資料夾",
+        "zh-Hans": "参考文件夹",
+        "ja": "参照フォルダ",
+    },
+    "font_source_family": {
+        "en": "installed, matches current document",
+        "zh-Hant": "已安裝・同當前文件",
+        "zh-Hans": "已安装・同当前文件",
+        "ja": "インストール済み・現在の書類と同名",
+    },
+    "font_source_covering": {
+        "en": "installed",
+        "zh-Hant": "已安裝",
+        "zh-Hans": "已安装",
+        "ja": "インストール済み",
+    },
+    "font_source_cascade": {
+        "en": "system cascade",
+        "zh-Hant": "系統自動選擇",
+        "zh-Hans": "系统自动选择",
+        "ja": "システム自動選択",
+    },
+    "font_source_system": {
+        "en": "system font",
+        "zh-Hant": "系統字型",
+        "zh-Hans": "系统字体",
+        "ja": "システムフォント",
     },
 }
 

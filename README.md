@@ -42,6 +42,14 @@
 3. 查看拆解結果、同字根、衍生字
 4. 輸入多個部件（如「氵木」）搜尋同時包含所有部件的字：中欄列出輸入部件、右欄列出符合的字；此時筆畫篩選以各部件筆畫加總為基準（如「氵木」= 7 畫）
 
+### 參考字型資料夾（PUA 造字顯示）
+
+造字（PUA）的顯示字型優先序：參考字型資料夾 → 與當前文件同名的已安裝字型 → 其他已安裝字型。開發中的字型不必安裝，放進參考資料夾即可：
+
+1. 右下角篩選選單 > *開啟參考字型資料夾...*（位於 `~/Library/Application Support/Glyphs 3/HanziIDSComponentExplorer/Fonts/`）
+2. 放入字型檔（.otf / .ttf / .ttc / .otc）
+3. 切回工具視窗即生效；重新匯出覆蓋同檔名也會自動更新，不受 macOS 字型快取影響
+
 ## 系統需求
 
 - Glyphs 3.0 或以上
@@ -111,6 +119,14 @@ Download `HanziIDSComponentExplorer.glyphsPlugin` and double-click to install.
 2. Enter a Chinese character (e.g., "森") or Unicode (e.g., "68EE")
 3. View decomposition, sister characters, and derived characters
 4. Enter multiple components (e.g. "氵木") to find characters containing all of them: the middle column lists the input components, the right column lists the matches; stroke filtering then uses the sum of the components' stroke counts as the baseline (e.g. "氵木" = 7 strokes)
+
+### Reference Fonts Folder (PUA display)
+
+PUA glyphs resolve their display font in this order: reference fonts folder → installed font matching the current document's family name → other installed fonts. Fonts under development don't need to be installed — drop them into the reference folder:
+
+1. Bottom-right filter menu > *Open Reference Fonts Folder...* (located at `~/Library/Application Support/Glyphs 3/HanziIDSComponentExplorer/Fonts/`)
+2. Place font files (.otf / .ttf / .ttc / .otc) in the folder
+3. Switch back to the tool window to apply; re-exporting over the same file name also updates automatically, unaffected by the macOS font cache
 
 ## Requirements
 
