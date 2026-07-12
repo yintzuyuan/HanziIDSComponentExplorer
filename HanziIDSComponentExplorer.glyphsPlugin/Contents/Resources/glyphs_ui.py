@@ -23,7 +23,6 @@ from AppKit import (
     NSForegroundColorAttributeName,
     NSKernAttributeName,
     NSParagraphStyleAttributeName,
-    NSBaselineOffsetAttributeName,
     NSMutableParagraphStyle,
     NSColor,
     NSOpenPanel,
@@ -1758,11 +1757,9 @@ class HanziComponentSearchTool:
         font, source = self.font_and_source_for_char(char)
         self._set_preview_tooltip(font, source)
 
-        # 垂直偏移量：負值向下移動，正值向上移動
-        # 微調讓文字在 90px 高度區域內視覺居中
-        baseline_offset = -4
-
-        # 段落樣式：水平居中
+        # 不套 NSBaselineOffset：實測系統字型在預設（offset 0）即視覺置中，
+        # 舊的 -4 反而偏低 4pt。正 offset 對 top-pinned 單行無效、無法用它校正
+        # 大 ascender 手寫體（Hannotate 類需依實際墨跡邊界自訂繪製，見 #27）。
         paragraph_style = NSMutableParagraphStyle.alloc().init()
         paragraph_style.setAlignment_(1)  # NSCenterTextAlignment = 1
 
@@ -1772,7 +1769,6 @@ class HanziComponentSearchTool:
             {
                 NSFontAttributeName: font,
                 NSForegroundColorAttributeName: NSColor.labelColor(),
-                NSBaselineOffsetAttributeName: baseline_offset,
                 NSParagraphStyleAttributeName: paragraph_style,
             },
         )
